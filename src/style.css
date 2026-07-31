@@ -1,0 +1,211 @@
+/* CheapVPN / StudentShield Design System & Stylesheet */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+:root {
+  --primary: #0058bc;
+  --primary-container: #0070eb;
+  --on-primary: #ffffff;
+  --on-primary-container: #fefcff;
+  --primary-fixed-dim: #adc6ff;
+  --secondary: #006688;
+  --secondary-container: #00c1fd;
+  --on-secondary-container: #004b65;
+  --secondary-fixed: #c2e8ff;
+  --tertiary: #9e3d00;
+  --tertiary-container: #c64f00;
+  --tertiary-fixed: #ffdbcc;
+  --background: #f8f9fa;
+  --on-background: #191c1d;
+  --surface: #ffffff;
+  --surface-bright: #f8f9fa;
+  --surface-dim: #d9dadb;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #f3f4f5;
+  --surface-container: #edeeef;
+  --surface-container-high: #e7e8e9;
+  --surface-container-highest: #e1e3e4;
+  --on-surface: #191c1d;
+  --on-surface-variant: #414755;
+  --outline: #717786;
+  --outline-variant: #c1c6d7;
+  --error: #ba1a1a;
+  --error-container: #ffdad6;
+  --on-error-container: #93000a;
+  --shadow-color: rgba(0, 88, 188, 0.08);
+  --shadow-hover: rgba(0, 88, 188, 0.16);
+}
+
+.dark {
+  --primary: #adc6ff;
+  --primary-container: #004493;
+  --on-primary: #002e69;
+  --on-primary-container: #d8e2ff;
+  --secondary: #75d1ff;
+  --secondary-container: #004d67;
+  --on-secondary-container: #c2e8ff;
+  --background: #121619;
+  --on-background: #e1e3e4;
+  --surface: #1a1e22;
+  --surface-bright: #24292e;
+  --surface-dim: #0e1215;
+  --surface-container-lowest: #161a1e;
+  --surface-container-low: #1e2328;
+  --surface-container: #262c32;
+  --surface-container-high: #2f363d;
+  --surface-container-highest: #394149;
+  --on-surface: #e1e3e4;
+  --on-surface-variant: #c1c6d7;
+  --outline: #8b91a0;
+  --outline-variant: #3e4452;
+  --shadow-color: rgba(0, 0, 0, 0.3);
+  --shadow-hover: rgba(0, 112, 235, 0.25);
+}
+
+/* Base Body Styles */
+body {
+  font-family: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+  background-color: var(--background);
+  color: var(--on-background);
+  transition: background-color 0.3s ease, color 0.3s ease;
+  overflow-x: hidden;
+}
+
+/* Material Symbols Adjustments */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+}
+.material-symbols-outlined.fill-1 {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* Custom Shadows tinted with primary */
+.shadow-level-1 {
+  box-shadow: 0px 4px 16px var(--shadow-color);
+}
+.shadow-level-2 {
+  box-shadow: 0px 12px 32px var(--shadow-color);
+}
+.shadow-hover-glow:hover {
+  box-shadow: 0px 16px 36px var(--shadow-hover);
+  transform: translateY(-2px);
+}
+
+/* Animated Circular Progress Gauge */
+.circular-progress {
+  transform: rotate(-90deg);
+}
+.circular-progress circle {
+  transition: stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Connection Pulse Animation */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(0, 112, 235, 0.5);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 16px rgba(0, 112, 235, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(0, 112, 235, 0);
+  }
+}
+.pulse-connect {
+  animation: pulse-ring 2s infinite;
+}
+
+/* Smooth Tab Transitions */
+.page-view {
+  display: none;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.page-view.active {
+  display: block;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Hide Scrollbar helper */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Glassmorphism Effect */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.dark .glass-panel {
+  background: rgba(26, 30, 34, 0.85);
+}
+
+/* Toast Notifications */
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-col: column;
+  gap: 10px;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  min-width: 280px;
+  padding: 14px 20px;
+  border-radius: 12px;
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  box-shadow: 0px 10px 25px rgba(0, 0, 0, 0.15);
+  border: 1px solid var(--outline-variant);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  animation: toast-in 0.3s ease forwards;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* RTL Support */
+[dir="rtl"] {
+  direction: rtl;
+  text-align: right;
+}
+[dir="rtl"] .space-x-reverse > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-x-reverse: 1;
+}
+
+/* Custom Scrollbar for list items */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--outline-variant);
+  border-radius: 4px;
+}

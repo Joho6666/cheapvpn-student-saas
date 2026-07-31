@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CheapVPN - Academic Internet Access</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary-fixed-variant": "#454748",
+                        "on-secondary-container": "#5c666e",
+                        "inverse-primary": "#adc6ff",
+                        "on-tertiary-container": "#fcfdfe",
+                        "surface-container-high": "#dfe9fa",
+                        "primary-fixed-dim": "#adc6ff",
+                        "surface-variant": "#d9e3f4",
+                        "on-surface-variant": "#414755",
+                        "surface": "#f8f9ff",
+                        "on-primary": "#ffffff",
+                        "surface-dim": "#d1dbec",
+                        "tertiary-container": "#737576",
+                        "on-primary-container": "#fefcff",
+                        "on-primary-fixed": "#001a41",
+                        "tertiary-fixed-dim": "#c5c7c8",
+                        "outline-variant": "#c1c6d7",
+                        "on-primary-fixed-variant": "#004493",
+                        "surface-tint": "#005bc1",
+                        "secondary": "#566068",
+                        "on-secondary-fixed-variant": "#3e4850",
+                        "primary": "#0058bc",
+                        "secondary-fixed-dim": "#bec8d1",
+                        "on-error-container": "#93000a",
+                        "surface-container-low": "#eef4ff",
+                        "surface-bright": "#f8f9ff",
+                        "tertiary": "#5a5c5d",
+                        "on-secondary": "#ffffff",
+                        "outline": "#717786",
+                        "on-tertiary-fixed": "#191c1d",
+                        "surface-container": "#e5eeff",
+                        "surface-container-lowest": "#ffffff",
+                        "primary-fixed": "#d8e2ff",
+                        "error": "#ba1a1a",
+                        "tertiary-fixed": "#e1e3e4",
+                        "secondary-container": "#dae4ee",
+                        "primary-container": "#0070eb",
+                        "inverse-surface": "#27313e",
+                        "secondary-fixed": "#dae4ee",
+                        "on-surface": "#121c28",
+                        "background": "#f8f9ff",
+                        "inverse-on-surface": "#eaf1ff",
+                        "on-secondary-fixed": "#131d24",
+                        "on-tertiary": "#ffffff",
+                        "surface-container-highest": "#d9e3f4",
+                        "on-background": "#121c28",
+                        "error-container": "#ffdad6",
+                        "on-error": "#ffffff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "lg": "24px",
+                        "margin-mobile": "16px",
+                        "md": "16px",
+                        "xl": "32px",
+                        "gutter": "24px",
+                        "base": "4px",
+                        "3xl": "64px",
+                        "xs": "4px",
+                        "sm": "8px",
+                        "2xl": "48px",
+                        "margin-desktop": "40px"
+                    },
+                    "fontFamily": {
+                        "label-sm": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "label-md": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "body-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-sm": ["12px", { "lineHeight": "1.2", "fontWeight": "600" }],
+                        "headline-md": ["24px", { "lineHeight": "1.4", "fontWeight": "600" }],
+                        "label-md": ["14px", { "lineHeight": "1.4", "fontWeight": "500" }],
+                        "display-lg": ["48px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "headline-lg": ["32px", { "lineHeight": "1.3", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background antialiased font-body-md overflow-x-hidden min-h-screen pb-safe">
+<!-- TopNavBar (Mobile adapted from Shared Components) -->
+<header class="sticky top-0 z-50 flex justify-between items-center w-full px-margin-mobile bg-surface h-16 border-b border-outline-variant md:hidden">
+<a class="text-headline-md font-headline-md font-bold text-primary" href="#">CheapVPN</a>
+<div class="flex items-center gap-sm">
+<button class="bg-primary text-on-primary rounded-lg px-4 py-2 font-label-md text-label-md">Get Started</button>
+<button aria-label="Menu" class="text-on-surface p-2">
+<span class="material-symbols-outlined">menu</span>
+</button>
+</div>
+</header>
+<!-- Main Content -->
+<main class="w-full max-w-full pb-[80px]"> <!-- padding bottom for BottomNavBar -->
+<!-- Hero Section -->
+<section class="px-margin-mobile pt-xl pb-2xl flex flex-col items-center text-center bg-surface-container-low rounded-b-2xl shadow-sm border-b border-outline-variant">
+<h1 class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface mb-md">Seamless Academic Access for International Students.</h1>
+<p class="font-body-md text-body-md text-on-surface-variant mb-xl max-w-[90%]">Secure, fast, and reliable connection to university resources, libraries, and communication platforms back home. Built for study, priced for students.</p>
+<button class="w-full max-w-[300px] bg-primary hover:bg-primary-container text-on-primary hover:text-on-primary-container transition-colors py-4 rounded-xl font-label-md text-label-md font-bold shadow-md flex items-center justify-center gap-2">
+<span>Start for ¥9.9</span>
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+<p class="mt-sm font-label-sm text-label-sm text-on-surface-variant">Cancel anytime. 7-day money-back guarantee.</p>
+<div class="mt-xl w-full max-w-[320px] rounded-xl overflow-hidden border border-outline-variant shadow-sm relative">
+<img class="w-full h-auto object-cover" data-alt="A clean, modern mobile app interface showing a large circular 'Connect' button glowing softly in primary blue, surrounded by minimal academic icons like books and globes on a light gray background. The scene is brightly lit, conveying ease of use and academic focus." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBdjA0hbnRT20huzOsYmIZpnS6LRmtahURs1xDP3S42t1m_o3oA8WPDbYmo_LwMrk0ilb43zvnxdNjmnoG1qyZKeNmhlKtnFFQZ-lU0jr_2QTvt_DxUAAQk8CRjL5OKqZtw7smx0t3b3CpsxF42GgOYqGn-5n2habjbgM1_mCqC01woAR9Yyet24AxgXzXGYRyux6nZTNa3sD4cssnKxwiAR3EIusGxHyjX2sZyrdO0uZ65tZMpcYVr"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent"></div>
+</div>
+</section>
+<!-- Benefits Section (Bento Grid Style) -->
+<section class="px-margin-mobile py-2xl bg-background">
+<h2 class="font-headline-md text-headline-md text-on-surface mb-lg text-center">Why Choose CheapVPN?</h2>
+<div class="grid grid-cols-1 gap-md">
+<!-- Benefit 1 -->
+<div class="bg-surface rounded-xl p-md border border-outline-variant shadow-sm flex flex-col items-start">
+<div class="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center mb-md">
+<span class="material-symbols-outlined">school</span>
+</div>
+<h3 class="font-label-md text-label-md font-bold text-on-surface mb-xs">Academic Focus</h3>
+<p class="font-body-md text-body-md text-on-surface-variant">Optimized routes for university portals, Canvas, Blackboard, and digital libraries. No more timeouts during crucial assignments.</p>
+</div>
+<!-- Benefit 2 -->
+<div class="bg-surface rounded-xl p-md border border-outline-variant shadow-sm flex flex-col items-start">
+<div class="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center mb-md">
+<span class="material-symbols-outlined">speed</span>
+</div>
+<h3 class="font-label-md text-label-md font-bold text-on-surface mb-xs">High-Speed Streaming</h3>
+<p class="font-body-md text-body-md text-on-surface-variant">Enjoy buffer-free video lectures and seamless video calls home with our low-latency servers globally.</p>
+</div>
+<!-- Benefit 3 -->
+<div class="bg-surface rounded-xl p-md border border-outline-variant shadow-sm flex flex-col items-start">
+<div class="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center mb-md">
+<span class="material-symbols-outlined">devices</span>
+</div>
+<h3 class="font-label-md text-label-md font-bold text-on-surface mb-xs">Multi-Device Support</h3>
+<p class="font-body-md text-body-md text-on-surface-variant">Connect your laptop, phone, and tablet simultaneously with a single account. Perfect for a complete study setup.</p>
+</div>
+</div>
+</section>
+<!-- Pricing Card Section -->
+<section class="px-margin-mobile py-2xl bg-surface-container-low rounded-t-2xl shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] border-t border-outline-variant">
+<h2 class="font-headline-md text-headline-md text-on-surface mb-md text-center">Simple, Student Pricing</h2>
+<p class="font-body-md text-body-md text-on-surface-variant mb-xl text-center max-w-[90%] mx-auto">One transparent plan. Everything included.</p>
+<div class="bg-surface rounded-2xl p-lg border-2 border-primary shadow-lg relative max-w-[360px] mx-auto">
+<div class="absolute top-0 right-0 transform translate-x-2 -translate-y-1/2">
+<span class="bg-secondary-container text-on-secondary-container font-label-sm text-label-sm px-3 py-1 rounded-full border border-outline-variant">Best Value</span>
+</div>
+<div class="text-center mb-lg">
+<span class="font-display-lg text-display-lg text-on-surface">¥9.9</span>
+<span class="font-body-md text-body-md text-on-surface-variant">/ month</span>
+</div>
+<ul class="space-y-sm mb-xl">
+<li class="flex items-center gap-sm text-on-surface font-body-md text-body-md">
+<span class="material-symbols-outlined text-primary text-[20px]">check_circle</span> Unlimited Data
+                     </li>
+<li class="flex items-center gap-sm text-on-surface font-body-md text-body-md">
+<span class="material-symbols-outlined text-primary text-[20px]">check_circle</span> 50+ Global Servers
+                     </li>
+<li class="flex items-center gap-sm text-on-surface font-body-md text-body-md">
+<span class="material-symbols-outlined text-primary text-[20px]">check_circle</span> 3 Devices Simultaneously
+                     </li>
+<li class="flex items-center gap-sm text-on-surface font-body-md text-body-md">
+<span class="material-symbols-outlined text-primary text-[20px]">check_circle</span> 24/7 Support
+                     </li>
+</ul>
+<button class="w-full bg-primary text-on-primary py-3 rounded-xl font-label-md text-label-md font-bold hover:bg-primary-container transition-colors">
+                     Get the Plan
+                 </button>
+</div>
+</section>
+</main>
+<!-- BottomNavBar (Semantic Shell - Home Active) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-margin-mobile py-2 pb-safe bg-surface shadow-lg border-t border-outline-variant rounded-t-xl md:hidden">
+<a class="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-xl px-4 py-1 active-nav" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">home</span>
+<span class="font-label-sm text-label-sm mt-xs">Home</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:bg-surface-variant rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">card_membership</span>
+<span class="font-label-sm text-label-sm mt-xs">Subs</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:bg-surface-variant rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">payments</span>
+<span class="font-label-sm text-label-sm mt-xs">Billing</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:bg-surface-variant rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="font-label-sm text-label-sm mt-xs">Account</span>
+</a>
+</nav>
+<script>
+        // Simple script to handle interaction states for nav if needed
+        document.querySelectorAll('.active-nav').forEach(el => {
+            el.addEventListener('mousedown', () => el.classList.add('scale-90', 'transition-transform'));
+            el.addEventListener('mouseup', () => el.classList.remove('scale-90'));
+            el.addEventListener('mouseleave', () => el.classList.remove('scale-90'));
+        });
+    </script>
+</body></html>

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Account Settings - CheapVPN</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed-dim": "#adc6ff",
+                        "secondary": "#006688",
+                        "surface-bright": "#f8f9fa",
+                        "surface-variant": "#e1e3e4",
+                        "secondary-fixed": "#c2e8ff",
+                        "on-surface": "#191c1d",
+                        "surface-container-highest": "#e1e3e4",
+                        "tertiary-fixed-dim": "#ffb595",
+                        "on-error-container": "#93000a",
+                        "on-primary-container": "#fefcff",
+                        "on-background": "#191c1d",
+                        "surface": "#f8f9fa",
+                        "surface-container-low": "#f3f4f5",
+                        "on-primary-fixed": "#001a41",
+                        "on-secondary-container": "#004b65",
+                        "secondary-fixed-dim": "#75d1ff",
+                        "tertiary-container": "#c64f00",
+                        "on-tertiary-container": "#fffbff",
+                        "outline-variant": "#c1c6d7",
+                        "on-tertiary-fixed-variant": "#7c2e00",
+                        "inverse-surface": "#2e3132",
+                        "on-secondary": "#ffffff",
+                        "on-primary": "#ffffff",
+                        "primary-fixed": "#d8e2ff",
+                        "surface-container": "#edeeef",
+                        "outline": "#717786",
+                        "on-secondary-fixed": "#001e2b",
+                        "on-tertiary": "#ffffff",
+                        "surface-tint": "#005bc1",
+                        "surface-dim": "#d9dadb",
+                        "primary-container": "#0070eb",
+                        "primary": "#0058bc",
+                        "on-error": "#ffffff",
+                        "tertiary": "#9e3d00",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary-fixed-variant": "#004d67",
+                        "on-tertiary-fixed": "#351000",
+                        "secondary-container": "#00c1fd",
+                        "tertiary-fixed": "#ffdbcc",
+                        "surface-container-high": "#e7e8e9",
+                        "inverse-primary": "#adc6ff",
+                        "error": "#ba1a1a",
+                        "on-surface-variant": "#414755",
+                        "inverse-on-surface": "#f0f1f2",
+                        "error-container": "#ffdad6",
+                        "on-primary-fixed-variant": "#004493",
+                        "background": "#f8f9fa"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-desktop": "40px",
+                        "gutter": "24px",
+                        "base": "8px",
+                        "margin-mobile": "16px",
+                        "container-max": "1200px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Inter"],
+                        "headline-xl": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "label-sm": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "headline-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-xl": ["40px", { "lineHeight": "48px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "label-md": ["14px", { "lineHeight": "20px", "fontWeight": "500" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "label-sm": ["12px", { "lineHeight": "16px", "fontWeight": "500" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body {
+            background-color: theme('colors.background');
+            color: theme('colors.on-background');
+        }
+    </style>
+</head>
+<body class="antialiased min-h-screen flex flex-col">
+<!-- TopAppBar -->
+<header class="bg-surface dark:bg-on-background shadow-[0_4px_12px_rgba(0,122,255,0.08)] sticky top-0 z-50 w-full flex justify-between items-center h-16 px-margin-desktop max-w-container-max mx-auto shadow-sm">
+<div class="flex items-center gap-6">
+<a class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed-dim" href="#">CheapVPN</a>
+<nav class="hidden md:flex gap-6">
+<a class="text-on-surface-variant dark:text-outline-variant font-medium hover:text-primary dark:hover:text-primary-fixed-dim transition-colors duration-200" href="#">Pricing</a>
+<a class="text-on-surface-variant dark:text-outline-variant font-medium hover:text-primary dark:hover:text-primary-fixed-dim transition-colors duration-200" href="#">Support</a>
+<a class="text-on-surface-variant dark:text-outline-variant font-medium hover:text-primary dark:hover:text-primary-fixed-dim transition-colors duration-200" href="#">Setup Guide</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-primary dark:text-primary-fixed-dim font-medium hover:text-primary dark:hover:text-primary-fixed-dim transition-colors duration-200">Sign In</button>
+<button class="bg-primary text-on-primary px-4 py-2 rounded-full font-label-md text-label-md hover:bg-primary-container hover:text-on-primary-container transition-colors duration-200">Sign Up</button>
+<div class="flex gap-2">
+<button aria-label="language" class="p-2 text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined">language</span>
+</button>
+<button aria-label="notifications" class="p-2 text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+</div>
+<img alt="User Avatar" class="w-8 h-8 rounded-full object-cover border border-outline-variant" data-alt="A small, circular profile avatar showing a smiling international student in a bright, modern library setting. High-key lighting, clean corporate modern aesthetic, reliable and approachable mood. Primary blue accents in the clothing." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAAAzAJAmqhW--rNlQGixEvlNj10QdLdiLbEyhkFq0Szesn9ndguVs_rA3aVBTY_VAObsFLIKLlnbaGl29hi72YYMZlqjEZTinwC-voJ2PgPMB1IvU__9PYh0lUwLY6kYDzpj1_nlcMi1ydKzxArBjpUEHgS8i6C4Tbml1xkOmJO7JnLh01YLAQUF_60A_7tbUPwdUUvpDJeZu1OHnCK4riSNs9ejPFTannCWWowCsPkwfj5dfHzw90"/>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-grow w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-8 md:py-12 flex flex-col md:flex-row gap-8">
+<!-- Sidebar Navigation -->
+<aside class="w-full md:w-64 flex-shrink-0">
+<div class="bg-surface-container-lowest rounded-xl border border-outline-variant p-4 sticky top-24">
+<nav class="flex flex-col gap-2">
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg bg-primary-container text-on-primary-container font-label-md text-label-md transition-colors" href="#profile">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">person</span>
+                        Profile
+                    </a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface font-label-md text-label-md transition-colors" href="#security">
+<span class="material-symbols-outlined">lock</span>
+                        Security
+                    </a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface font-label-md text-label-md transition-colors" href="#billing">
+<span class="material-symbols-outlined">receipt_long</span>
+                        Billing
+                    </a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface font-label-md text-label-md transition-colors" href="#devices">
+<span class="material-symbols-outlined">devices</span>
+                        Devices
+                    </a>
+</nav>
+</div>
+</aside>
+<!-- Content Area -->
+<div class="flex-grow flex flex-col gap-8">
+<!-- Profile Section -->
+<section class="bg-surface-container-lowest rounded-2xl border border-outline-variant p-6 md:p-8 shadow-sm" id="profile">
+<h2 class="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-surface mb-6">Profile Settings</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="space-y-2">
+<label class="font-label-sm text-label-sm text-on-surface-variant">Full Name</label>
+<input class="w-full h-12 px-4 rounded-lg border border-outline-variant bg-surface focus:ring-2 focus:ring-primary focus:border-primary transition-shadow font-body-md text-body-md text-on-surface" type="text" value="Chen Wei"/>
+</div>
+<div class="space-y-2">
+<label class="font-label-sm text-label-sm text-on-surface-variant">Email Address</label>
+<input class="w-full h-12 px-4 rounded-lg border border-outline-variant bg-surface focus:ring-2 focus:ring-primary focus:border-primary transition-shadow font-body-md text-body-md text-on-surface" type="email" value="chen.wei@student.edu"/>
+</div>
+<div class="space-y-2 md:col-span-2">
+<label class="font-label-sm text-label-sm text-on-surface-variant">Language Preference</label>
+<select class="w-full md:w-1/2 h-12 px-4 rounded-lg border border-outline-variant bg-surface focus:ring-2 focus:ring-primary focus:border-primary transition-shadow font-body-md text-body-md text-on-surface">
+<option>English (US)</option>
+<option>Simplified Chinese (简体中文)</option>
+</select>
+</div>
+</div>
+<div class="mt-8 flex justify-end">
+<button class="bg-primary text-on-primary px-6 py-3 rounded-lg font-label-md text-label-md hover:bg-primary-container hover:text-on-primary-container transition-colors min-h-[48px]">Save Changes</button>
+</div>
+</section>
+</div>
+</main>
+<!-- Footer -->
+<footer class="bg-surface-container-low dark:bg-surface-container-lowest border-t border-outline-variant dark:border-outline mt-auto w-full py-12 px-margin-desktop max-w-container-max mx-auto flex flex-col md:flex-row justify-between gap-gutter">
+<div>
+<div class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed-dim mb-4">CheapVPN</div>
+<p class="text-secondary dark:text-secondary-fixed-dim font-body-md text-body-md">© 2024 CheapVPN. Connecting students to the world.</p>
+</div>
+<nav class="flex gap-6">
+<a class="text-on-surface-variant dark:text-outline-variant font-label-sm text-label-sm hover:text-primary dark:hover:text-primary-fixed-dim underline transition-all" href="#">Company</a>
+<a class="text-on-surface-variant dark:text-outline-variant font-label-sm text-label-sm hover:text-primary dark:hover:text-primary-fixed-dim underline transition-all" href="#">Products</a>
+<a class="text-on-surface-variant dark:text-outline-variant font-label-sm text-label-sm hover:text-primary dark:hover:text-primary-fixed-dim underline transition-all" href="#">Support</a>
+<a class="text-on-surface-variant dark:text-outline-variant font-label-sm text-label-sm hover:text-primary dark:hover:text-primary-fixed-dim underline transition-all" href="#">Legal</a>
+</nav>
+</footer>
+</body></html>

@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CheapVPN - Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-tertiary-fixed-variant": "#454748",
+                      "on-secondary-container": "#5c666e",
+                      "inverse-primary": "#adc6ff",
+                      "on-tertiary-container": "#fcfdfe",
+                      "surface-container-high": "#dfe9fa",
+                      "primary-fixed-dim": "#adc6ff",
+                      "surface-variant": "#d9e3f4",
+                      "on-surface-variant": "#414755",
+                      "surface": "#f8f9ff",
+                      "on-primary": "#ffffff",
+                      "surface-dim": "#d1dbec",
+                      "tertiary-container": "#737576",
+                      "on-primary-container": "#fefcff",
+                      "on-primary-fixed": "#001a41",
+                      "tertiary-fixed-dim": "#c5c7c8",
+                      "outline-variant": "#c1c6d7",
+                      "on-primary-fixed-variant": "#004493",
+                      "surface-tint": "#005bc1",
+                      "secondary": "#566068",
+                      "on-secondary-fixed-variant": "#3e4850",
+                      "primary": "#0058bc",
+                      "secondary-fixed-dim": "#bec8d1",
+                      "on-error-container": "#93000a",
+                      "surface-container-low": "#eef4ff",
+                      "surface-bright": "#f8f9ff",
+                      "tertiary": "#5a5c5d",
+                      "on-secondary": "#ffffff",
+                      "outline": "#717786",
+                      "on-tertiary-fixed": "#191c1d",
+                      "surface-container": "#e5eeff",
+                      "surface-container-lowest": "#ffffff",
+                      "primary-fixed": "#d8e2ff",
+                      "error": "#ba1a1a",
+                      "tertiary-fixed": "#e1e3e4",
+                      "secondary-container": "#dae4ee",
+                      "primary-container": "#0070eb",
+                      "inverse-surface": "#27313e",
+                      "secondary-fixed": "#dae4ee",
+                      "on-surface": "#121c28",
+                      "background": "#f8f9ff",
+                      "inverse-on-surface": "#eaf1ff",
+                      "on-secondary-fixed": "#131d24",
+                      "on-tertiary": "#ffffff",
+                      "surface-container-highest": "#d9e3f4",
+                      "on-background": "#121c28",
+                      "error-container": "#ffdad6",
+                      "on-error": "#ffffff"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "lg": "24px",
+                      "margin-mobile": "16px",
+                      "md": "16px",
+                      "xl": "32px",
+                      "gutter": "24px",
+                      "base": "4px",
+                      "3xl": "64px",
+                      "xs": "4px",
+                      "sm": "8px",
+                      "2xl": "48px",
+                      "margin-desktop": "40px"
+              },
+              "fontFamily": {
+                      "label-sm": [
+                              "Inter"
+                      ],
+                      "headline-md": [
+                              "Inter"
+                      ],
+                      "label-md": [
+                              "Inter"
+                      ],
+                      "display-lg": [
+                              "Inter"
+                      ],
+                      "headline-lg-mobile": [
+                              "Inter"
+                      ],
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "headline-lg": [
+                              "Inter"
+                      ],
+                      "body-lg": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "label-sm": [
+                              "12px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "label-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "display-lg": [
+                              "48px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "headline-lg-mobile": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.3",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-md": [
+                              "16px",
+                              {
+                                      "lineHeight": "1.6",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-lg": [
+                              "32px",
+                              {
+                                      "lineHeight": "1.3",
+                                      "letterSpacing": "-0.01em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-lg": [
+                              "18px",
+                              {
+                                      "lineHeight": "1.6",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+    </script>
+<style>
+        .circular-progress {
+            stroke-dasharray: 283; /* 2 * pi * r (approx 45) */
+            stroke-dashoffset: 283;
+            transition: stroke-dashoffset 1s ease-out;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md min-h-screen flex selection:bg-primary-container selection:text-on-primary-container">
+<!-- SideNavBar (Desktop Only) -->
+<nav class="hidden md:flex fixed left-0 top-0 h-full flex-col p-md z-40 bg-surface-container-low dark:bg-inverse-surface border-r border-outline-variant dark:border-outline w-64">
+<!-- Brand/Header -->
+<div class="mb-2xl px-md pt-sm">
+<h1 class="text-headline-md font-headline-md font-bold text-primary dark:text-inverse-primary tracking-tight">CheapVPN</h1>
+</div>
+<!-- User Profile Stub (Header items from JSON) -->
+<div class="flex items-center gap-md px-md mb-xl">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-secondary-container" style="font-variation-settings: 'FILL' 1;">person</span>
+</div>
+<div class="overflow-hidden">
+<p class="font-label-md text-label-md text-on-surface truncate">International Student</p>
+<p class="font-label-sm text-label-sm text-on-surface-variant truncate">Basic Plan - 50GB</p>
+</div>
+</div>
+<!-- Navigation Links -->
+<div class="flex flex-col gap-sm flex-1">
+<!-- Active: Dashboard -->
+<a aria-current="page" class="flex items-center gap-md bg-secondary-container dark:bg-secondary text-on-secondary-container dark:text-on-secondary rounded-lg px-md py-sm scale-95 transition-transform" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">dashboard</span>
+<span class="font-label-md text-label-md">Dashboard</span>
+</a>
+<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant hover:bg-surface-variant dark:hover:bg-on-surface-variant rounded-lg px-md py-sm transition-all" href="#">
+<span class="material-symbols-outlined">card_membership</span>
+<span class="font-label-md text-label-md">Subscription</span>
+</a>
+<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant hover:bg-surface-variant dark:hover:bg-on-surface-variant rounded-lg px-md py-sm transition-all" href="#">
+<span class="material-symbols-outlined">receipt_long</span>
+<span class="font-label-md text-label-md">Billing</span>
+</a>
+<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant hover:bg-surface-variant dark:hover:bg-on-surface-variant rounded-lg px-md py-sm transition-all" href="#">
+<span class="material-symbols-outlined">group_add</span>
+<span class="font-label-md text-label-md">Referral</span>
+</a>
+<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant hover:bg-surface-variant dark:hover:bg-on-surface-variant rounded-lg px-md py-sm transition-all" href="#">
+<span class="material-symbols-outlined">help_center</span>
+<span class="font-label-md text-label-md">Support</span>
+</a>
+<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant hover:bg-surface-variant dark:hover:bg-on-surface-variant rounded-lg px-md py-sm transition-all" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="font-label-md text-label-md">Account</span>
+</a>
+</div>
+<!-- Bottom Action in Nav -->
+<div class="mt-auto pt-lg border-t border-outline-variant">
+<button class="w-full flex items-center justify-center gap-sm font-label-md text-label-md text-on-surface-variant hover:bg-surface-variant rounded-lg px-md py-sm transition-all">
+<span class="material-symbols-outlined">logout</span>
+                Sign Out
+            </button>
+</div>
+</nav>
+<!-- Main Content Area -->
+<main class="flex-1 md:ml-64 min-h-screen pb-24 md:pb-xl">
+<!-- Top App Bar equivalent for Mobile is omitted based on instructions prioritizing SideNav for destination -->
+<!-- Content Container -->
+<div class="max-w-7xl mx-auto px-margin-mobile md:px-margin-desktop py-lg md:py-xl">
+<!-- Welcome Header -->
+<header class="mb-2xl">
+<h2 class="font-display-lg text-display-lg text-on-surface mb-sm">Welcome back.</h2>
+<p class="font-body-lg text-body-lg text-on-surface-variant">Here is a quick overview of your CheapVPN academic access.</p>
+</header>
+<!-- Bento Grid Layout -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-lg auto-rows-min">
+<!-- 1. Data Usage & Subscription Status (Hero Card) -->
+<div class="md:col-span-8 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-lg md:p-xl flex flex-col relative overflow-hidden group">
+<div class="absolute inset-0 bg-gradient-to-br from-surface-container-lowest to-surface-container opacity-50 pointer-events-none"></div>
+<div class="flex justify-between items-start mb-lg relative z-10">
+<div>
+<div class="flex items-center gap-sm mb-xs">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">verified</span>
+<span class="font-label-sm text-label-sm uppercase tracking-wider text-primary">Active Subscription</span>
+</div>
+<h3 class="font-headline-lg text-headline-lg text-on-surface">CheapVPN Student Plan</h3>
+</div>
+<div class="bg-secondary-container text-on-secondary-container px-sm py-xs rounded-full font-label-sm text-label-sm flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-primary block"></span>
+                            Online
+                        </div>
+</div>
+<div class="flex flex-col md:flex-row gap-xl md:gap-2xl items-center relative z-10 flex-1">
+<!-- Circular Progress -->
+<div class="relative w-48 h-48 flex shrink-0 justify-center items-center">
+<svg class="transform -rotate-90 w-full h-full" viewbox="0 0 100 100">
+<!-- Background Circle -->
+<circle class="text-surface-variant" cx="50" cy="50" fill="transparent" r="45" stroke="currentColor" stroke-width="8"></circle>
+<!-- Progress Circle (34.2 / 50 = ~68.4%) -->
+<circle class="text-primary circular-progress" cx="50" cy="50" fill="transparent" r="45" stroke="currentColor" stroke-linecap="round" stroke-width="8" style="stroke-dashoffset: 89;"></circle>
+</svg>
+<div class="absolute flex flex-col items-center justify-center text-center">
+<span class="font-headline-lg text-headline-lg text-on-surface leading-none mb-xs">34.2<span class="text-body-md text-on-surface-variant font-normal">GB</span></span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">of 50 GB Used</span>
+</div>
+</div>
+<!-- Details & Renewal -->
+<div class="flex-1 w-full space-y-md">
+<div class="flex justify-between items-center py-sm border-b border-surface-variant">
+<span class="font-body-md text-body-md text-on-surface-variant flex items-center gap-sm"><span class="material-symbols-outlined text-[20px]">calendar_month</span> Expiration Date</span>
+<span class="font-label-md text-label-md text-on-surface">August 31, 2026</span>
+</div>
+<div class="flex justify-between items-center py-sm border-b border-surface-variant">
+<span class="font-body-md text-body-md text-on-surface-variant flex items-center gap-sm"><span class="material-symbols-outlined text-[20px]">payments</span> Renewal Price</span>
+<span class="font-label-md text-label-md text-on-surface">¥19.9</span>
+</div>
+<!-- Primary Actions -->
+<div class="pt-sm grid grid-cols-2 gap-md">
+<button class="bg-primary text-on-primary font-label-md text-label-md py-sm px-md rounded-lg hover:bg-on-primary-fixed-variant transition-colors flex items-center justify-center gap-sm">
+<span class="material-symbols-outlined text-[20px]">autorenew</span>
+                                    Renew Plan
+                                </button>
+<button class="bg-surface-container text-primary font-label-md text-label-md py-sm px-md rounded-lg hover:bg-surface-container-high transition-colors border border-outline-variant flex items-center justify-center gap-sm">
+<span class="material-symbols-outlined text-[20px]">build</span>
+                                    Setup Guide
+                                </button>
+</div>
+</div>
+</div>
+</div>
+<!-- 2. Subscription Actions (Quick Actions) -->
+<div class="md:col-span-4 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-lg flex flex-col gap-md h-full">
+<h4 class="font-headline-md text-headline-md text-on-surface mb-xs">Access Details</h4>
+<p class="font-body-md text-body-md text-on-surface-variant mb-md flex-1">Use these tools to configure your devices and manage your subscription tokens.</p>
+<div class="flex flex-col gap-sm">
+<button class="w-full flex items-center justify-between bg-surface p-md rounded-lg border border-outline-variant hover:border-primary hover:bg-surface-container-low transition-all group">
+<div class="flex items-center gap-md">
+<span class="material-symbols-outlined text-primary">content_copy</span>
+<span class="font-label-md text-label-md text-on-surface">Copy Subscription</span>
+</div>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors text-[20px]">arrow_forward</span>
+</button>
+<button class="w-full flex items-center justify-between bg-surface p-md rounded-lg border border-outline-variant hover:border-primary hover:bg-surface-container-low transition-all group">
+<div class="flex items-center gap-md">
+<span class="material-symbols-outlined text-primary">qr_code</span>
+<span class="font-label-md text-label-md text-on-surface">Show QR Code</span>
+</div>
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors text-[20px]">arrow_forward</span>
+</button>
+<button class="w-full flex items-center justify-between bg-surface p-md rounded-lg border border-outline-variant hover:border-error hover:bg-error-container transition-all group mt-sm">
+<div class="flex items-center gap-md">
+<span class="material-symbols-outlined text-error">restart_alt</span>
+<span class="font-label-md text-label-md text-error">Reset Subscription</span>
+</div>
+</button>
+</div>
+</div>
+<!-- 3. Announcements -->
+<div class="md:col-span-8 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm p-lg">
+<div class="flex justify-between items-center mb-md border-b border-surface-variant pb-sm">
+<h4 class="font-headline-md text-headline-md text-on-surface">Recent Announcements</h4>
+<button class="font-label-sm text-label-sm text-primary hover:underline">View All</button>
+</div>
+<div class="space-y-md">
+<!-- Announcement Item -->
+<div class="flex gap-md group cursor-pointer p-sm rounded-lg hover:bg-surface-container-low transition-colors -mx-sm">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center shrink-0 mt-1 text-primary">
+<span class="material-symbols-outlined text-[20px]">campaign</span>
+</div>
+<div>
+<h5 class="font-label-md text-label-md text-on-surface group-hover:text-primary transition-colors">Scheduled Maintenance for Asian Nodes</h5>
+<p class="font-body-md text-body-md text-on-surface-variant mt-xs line-clamp-2">We will be performing scheduled maintenance on select nodes to improve latency and stability. Expected downtime is minimal.</p>
+<span class="font-label-sm text-label-sm text-outline mt-sm block">2 Days Ago</span>
+</div>
+</div>
+<!-- Announcement Item -->
+<div class="flex gap-md group cursor-pointer p-sm rounded-lg hover:bg-surface-container-low transition-colors -mx-sm border-t border-surface-variant">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center shrink-0 mt-1 text-primary">
+<span class="material-symbols-outlined text-[20px]">school</span>
+</div>
+<div>
+<h5 class="font-label-md text-label-md text-on-surface group-hover:text-primary transition-colors">New Student Discount Policy Active</h5>
+<p class="font-body-md text-body-md text-on-surface-variant mt-xs line-clamp-2">Verify your academic email to unlock additional bandwidth for the upcoming semester. Check the referral tab for details.</p>
+<span class="font-label-sm text-label-sm text-outline mt-sm block">1 Week Ago</span>
+</div>
+</div>
+</div>
+</div>
+<!-- 4. Support Widget -->
+<div class="md:col-span-4 bg-primary text-on-primary rounded-xl shadow-sm p-lg flex flex-col justify-between relative overflow-hidden">
+<!-- Decorative Graphic -->
+<div class="absolute -right-8 -top-8 opacity-20 pointer-events-none">
+<span class="material-symbols-outlined text-[120px]" style="font-variation-settings: 'FILL' 1;">support_agent</span>
+</div>
+<div class="relative z-10">
+<div class="w-12 h-12 rounded-lg bg-on-primary/20 flex items-center justify-center mb-md backdrop-blur-sm">
+<span class="material-symbols-outlined text-[24px]">help_center</span>
+</div>
+<h4 class="font-headline-md text-headline-md mb-xs">Need Assistance?</h4>
+<p class="font-body-md text-body-md text-on-primary/80 mb-xl">Our academic support team is available 24/7 to help you maintain stable access.</p>
+</div>
+<button class="relative z-10 w-full bg-on-primary text-primary font-label-md text-label-md py-sm px-md rounded-lg hover:bg-surface-container-lowest transition-colors flex items-center justify-center gap-sm">
+<span class="material-symbols-outlined text-[20px]">chat</span>
+                        Contact Support
+                    </button>
+</div>
+</div> <!-- End Grid -->
+</div>
+</main>
+<!-- BottomNavBar (Mobile Only) - Using JSON definition -->
+<nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-margin-mobile py-2 pb-safe shadow-lg border-t border-outline-variant dark:border-outline bg-surface dark:bg-inverse-surface rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant px-4 py-1 hover:bg-surface-variant dark:hover:bg-inverse-surface rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined">home</span>
+<span class="font-label-sm text-label-sm mt-xs">Home</span>
+</a>
+<a aria-current="page" class="flex flex-col items-center justify-center bg-primary-container dark:bg-primary text-on-primary-container dark:text-on-primary rounded-xl px-4 py-1 scale-90 transition-transform" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">card_membership</span>
+<span class="font-label-sm text-label-sm mt-xs">Subs</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant px-4 py-1 hover:bg-surface-variant dark:hover:bg-inverse-surface rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined">payments</span>
+<span class="font-label-sm text-label-sm mt-xs">Billing</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant px-4 py-1 hover:bg-surface-variant dark:hover:bg-inverse-surface rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined">group</span>
+<span class="font-label-sm text-label-sm mt-xs">Referral</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant px-4 py-1 hover:bg-surface-variant dark:hover:bg-inverse-surface rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="font-label-sm text-label-sm mt-xs">Account</span>
+</a>
+</nav>
+<script>
+        // Simple animation trigger for the circular progress bar on load
+        document.addEventListener('DOMContentLoaded', () => {
+            const progressCircle = document.querySelector('.circular-progress');
+            if(progressCircle) {
+                // Calculate offset for 68.4% (34.2 of 50)
+                // Circumference = ~283. Offset = 283 - (283 * 0.684) = ~89.4
+                setTimeout(() => {
+                    progressCircle.style.strokeDashoffset = '89';
+                }, 100);
+            }
+        });
+    </script>
+</body></html>

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CheapVPN - Sign Up</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "primary-fixed-dim": "#adc6ff",
+                    "secondary": "#006688",
+                    "surface-bright": "#f8f9fa",
+                    "surface-variant": "#e1e3e4",
+                    "secondary-fixed": "#c2e8ff",
+                    "on-surface": "#191c1d",
+                    "surface-container-highest": "#e1e3e4",
+                    "tertiary-fixed-dim": "#ffb595",
+                    "on-error-container": "#93000a",
+                    "on-primary-container": "#fefcff",
+                    "on-background": "#191c1d",
+                    "surface": "#f8f9fa",
+                    "surface-container-low": "#f3f4f5",
+                    "on-primary-fixed": "#001a41",
+                    "on-secondary-container": "#004b65",
+                    "secondary-fixed-dim": "#75d1ff",
+                    "tertiary-container": "#c64f00",
+                    "on-tertiary-container": "#fffbff",
+                    "outline-variant": "#c1c6d7",
+                    "on-tertiary-fixed-variant": "#7c2e00",
+                    "inverse-surface": "#2e3132",
+                    "on-secondary": "#ffffff",
+                    "on-primary": "#ffffff",
+                    "primary-fixed": "#d8e2ff",
+                    "surface-container": "#edeeef",
+                    "outline": "#717786",
+                    "on-secondary-fixed": "#001e2b",
+                    "on-tertiary": "#ffffff",
+                    "surface-tint": "#005bc1",
+                    "surface-dim": "#d9dadb",
+                    "primary-container": "#0070eb",
+                    "primary": "#0058bc",
+                    "on-error": "#ffffff",
+                    "tertiary": "#9e3d00",
+                    "surface-container-lowest": "#ffffff",
+                    "on-secondary-fixed-variant": "#004d67",
+                    "on-tertiary-fixed": "#351000",
+                    "secondary-container": "#00c1fd",
+                    "tertiary-fixed": "#ffdbcc",
+                    "surface-container-high": "#e7e8e9",
+                    "inverse-primary": "#adc6ff",
+                    "error": "#ba1a1a",
+                    "on-surface-variant": "#414755",
+                    "inverse-on-surface": "#f0f1f2",
+                    "error-container": "#ffdad6",
+                    "on-primary-fixed-variant": "#004493",
+                    "background": "#f8f9fa"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "margin-desktop": "40px",
+                    "gutter": "24px",
+                    "base": "8px",
+                    "margin-mobile": "16px",
+                    "container-max": "1200px"
+            },
+            "fontFamily": {
+                    "body-md": ["Inter"],
+                    "headline-xl": ["Inter"],
+                    "body-lg": ["Inter"],
+                    "label-md": ["Inter"],
+                    "headline-lg-mobile": ["Inter"],
+                    "label-sm": ["Inter"],
+                    "headline-md": ["Inter"],
+                    "headline-lg": ["Inter"]
+            },
+            "fontSize": {
+                    "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                    "headline-xl": ["40px", {"lineHeight": "48px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                    "label-md": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                    "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                    "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "500"}],
+                    "headline-md": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                    "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600"}]
+            }
+          }
+        }
+      }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen flex flex-col">
+<!-- TopAppBar (Suppressed navigation links for transactional flow, keeping brand and trailing actions) -->
+<header class="bg-surface dark:bg-on-background shadow-[0_4px_12px_rgba(0,122,255,0.08)] shadow-sm sticky top-0 z-50 w-full flex justify-between items-center h-16 px-margin-desktop max-w-container-max mx-auto">
+<div class="flex items-center gap-base">
+<span class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed-dim">CheapVPN</span>
+</div>
+<!-- Language Switcher & Actions -->
+<div class="flex items-center gap-gutter">
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-[20px]">language</span>
+<select aria-label="Language" class="bg-transparent border-none text-label-md font-label-md cursor-pointer focus:ring-0 py-1 pr-6 pl-1">
+<option value="en">EN</option>
+<option value="cn">中文</option>
+</select>
+</div>
+<a class="font-label-md text-label-md text-on-surface-variant font-medium hover:text-primary transition-colors duration-200" href="#">Sign In</a>
+</div>
+</header>
+<!-- Main Content: Split Screen Layout -->
+<main class="flex-grow flex w-full">
+<!-- Left: Image/Brand area (hidden on smaller screens) -->
+<div class="hidden lg:flex w-1/2 bg-surface-container-low items-center justify-center relative overflow-hidden">
+<div class="absolute inset-0 z-0">
+<img alt="Workspace" class="object-cover w-full h-full opacity-60" data-alt="A bright, airy, modern digital workspace setup featuring a sleek laptop, a steaming cup of coffee, and subtly glowing blue abstract connective lines floating in the air. The scene conveys a sense of high-end educational technology, safety, and seamless global connection. The color palette is dominated by pristine whites, light grays, and energetic primary blue accents." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCCTke69C4tT1k6fQNWU4HnwdEkPI1QyA4eIUFToWRYzcRIEK6RRnuuArTO9CMsT_nk05R66S-yZk3XX_6DqmSQ4rqqaiTXn94GjY6Y61Z_Nhr2eyjIpdZBiH-A4vpAtoYrLlyEMt2AMOcEWpSRe0A_sLjzYQJfbHdFiqTOqN6Ry8M-uHeCSiqFFoGBeG2U1O34idQXvJEV2zbc1KCdJRRC_B7jSwehlv5EqfjEnvg-ma6QOG8AcIkB"/>
+</div>
+<div class="relative z-10 p-12 text-center">
+<h1 class="font-headline-xl text-headline-xl text-on-surface mb-6 drop-shadow-md">Connect to home,<br/>wherever you are.</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-md mx-auto">Fast, secure, and reliable access to the resources you need most.</p>
+</div>
+</div>
+<!-- Right: Registration Form -->
+<div class="w-full lg:w-1/2 flex items-center justify-center p-margin-mobile md:p-margin-desktop bg-surface">
+<div class="w-full max-w-md bg-white rounded-xl shadow-[0_12px_24px_rgba(0,122,255,0.08)] border border-surface-container-highest p-8">
+<div class="mb-8 text-center">
+<h2 class="font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-surface mb-2">Create Account</h2>
+<p class="font-body-md text-body-md text-on-surface-variant">Join CheapVPN to start browsing securely.</p>
+</div>
+<form action="#" class="space-y-6" method="POST">
+<!-- Email -->
+<div>
+<label class="block font-label-md text-label-md text-on-surface mb-1" for="email">Email Address</label>
+<div class="relative">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-symbols-outlined text-outline">mail</span>
+</div>
+<input class="block w-full pl-10 pr-3 py-3 border border-outline-variant rounded-lg bg-surface text-on-surface font-body-md text-body-md focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-sm placeholder:text-outline" id="email" name="email" placeholder="student@university.edu" required="" type="email"/>
+</div>
+</div>
+<!-- Password -->
+<div>
+<label class="block font-label-md text-label-md text-on-surface mb-1" for="password">Password</label>
+<div class="relative">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-symbols-outlined text-outline">lock</span>
+</div>
+<input class="block w-full pl-10 pr-10 py-3 border border-outline-variant rounded-lg bg-surface text-on-surface font-body-md text-body-md focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-sm placeholder:text-outline" id="password" name="password" placeholder="••••••••" required="" type="password"/>
+<div class="absolute inset-y-0 right-0 pr-3 flex items-center">
+<button class="text-outline hover:text-on-surface focus:outline-none" type="button">
+<span class="material-symbols-outlined">visibility</span>
+</button>
+</div>
+</div>
+<p class="mt-1 font-label-sm text-label-sm text-outline">Must be at least 8 characters.</p>
+</div>
+<!-- Invitation Code (Optional) -->
+<div>
+<label class="block font-label-md text-label-md text-on-surface mb-1 flex justify-between" for="invite">
+<span>Invitation Code</span>
+<span class="text-outline font-normal">Optional</span>
+</label>
+<div class="relative">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-symbols-outlined text-outline">redeem</span>
+</div>
+<input class="block w-full pl-10 pr-3 py-3 border border-outline-variant rounded-lg bg-surface text-on-surface font-body-md text-body-md focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-sm placeholder:text-outline" id="invite" name="invite" placeholder="Code" type="text"/>
+</div>
+</div>
+<!-- Terms Checkbox -->
+<div class="flex items-start mt-6">
+<div class="flex items-center h-5">
+<input class="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary bg-surface transition-colors cursor-pointer" id="terms" name="terms" required="" type="checkbox"/>
+</div>
+<div class="ml-3 font-body-md text-label-sm md:text-body-md text-on-surface-variant">
+<label class="cursor-pointer" for="terms">I agree to the <a class="text-primary font-medium hover:underline" href="#">Terms of Service</a> and <a class="text-primary font-medium hover:underline" href="#">Privacy Policy</a>.</label>
+</div>
+</div>
+<!-- Submit Button -->
+<div class="pt-2">
+<button class="w-full h-12 flex justify-center items-center rounded-lg bg-primary text-on-primary font-label-md text-label-md font-bold shadow-md hover:bg-primary-container hover:text-on-primary-container focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-all active:scale-[0.98]" type="submit">
+                            Sign Up
+                        </button>
+</div>
+</form>
+<div class="mt-8 text-center">
+<p class="font-body-md text-body-md text-on-surface-variant">
+                        Already have an account? 
+                        <a class="text-primary font-medium hover:underline" href="#">Sign In</a>
+</p>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer -->
+<footer class="bg-surface-container-low dark:bg-surface-container-lowest border-t border-outline-variant dark:border-outline w-full py-12 px-margin-desktop max-w-container-max mx-auto flex flex-col md:flex-row justify-between gap-gutter">
+<div class="flex flex-col gap-4">
+<span class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed-dim">CheapVPN</span>
+<p class="font-body-md text-body-md text-secondary dark:text-secondary-fixed-dim">© 2024 CheapVPN. Connecting students to the world.</p>
+</div>
+<div class="flex flex-wrap gap-x-8 gap-y-4">
+<a class="font-label-sm text-label-sm text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:underline transition-all focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded-sm outline-none" href="#">Company</a>
+<a class="font-label-sm text-label-sm text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:underline transition-all focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded-sm outline-none" href="#">Products</a>
+<a class="font-label-sm text-label-sm text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:underline transition-all focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded-sm outline-none" href="#">Support</a>
+<a class="font-label-sm text-label-sm text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-primary-fixed-dim hover:underline transition-all focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded-sm outline-none" href="#">Legal</a>
+</div>
+</footer>
+</body></html>

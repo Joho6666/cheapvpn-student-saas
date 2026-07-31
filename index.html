@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CheapVPN - Simple. Fast. Student-Friendly SaaS Interface</title>
+  <meta name="description" content="CheapVPN provides high-speed, reliable, and affordable VPN access tailored for international students worldwide. Starting from ¥19.9/month." />
+
+  <!-- Google Fonts: Inter & Noto Sans SC -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+
+  <!-- Google Material Symbols -->
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              DEFAULT: "#0058bc",
+              container: "#0070eb",
+              dim: "#adc6ff"
+            },
+            secondary: {
+              DEFAULT: "#006688",
+              container: "#00c1fd"
+            },
+            tertiary: {
+              DEFAULT: "#9e3d00",
+              container: "#c64f00"
+            },
+            background: "#f8f9fa",
+            onBackground: "#191c1d",
+            surface: "#ffffff"
+          },
+          fontFamily: {
+            sans: ['Inter', 'Noto Sans SC', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Application CSS -->
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body class="bg-background text-on-background min-h-screen flex flex-col antialiased selection:bg-primary-container selection:text-white">
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container"></div>
+
+  <!-- Top AppBar / Navigation Header -->
+  <header class="sticky top-0 z-50 w-full bg-surface/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-sm transition-colors">
+    <div class="max-w-[1280px] mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Brand Logo & Badge -->
+      <div class="flex items-center gap-6">
+        <a href="#" data-target="home" class="flex items-center gap-2 font-black text-xl text-primary dark:text-primary-dim tracking-tight">
+          <div class="w-9 h-9 rounded-xl bg-primary text-white flex items-center justify-center shadow-md shadow-primary/30">
+            <span class="material-symbols-outlined fill-1 text-xl">vpn_key</span>
+          </div>
+          <span>CheapVPN</span>
+          <span class="hidden sm:inline-block text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">Student Shield</span>
+        </a>
+
+        <!-- Desktop Navigation Links -->
+        <nav class="hidden lg:flex items-center gap-6 text-sm font-medium text-on-surface-variant">
+          <a href="#" data-target="home" data-i18n="home" class="hover:text-primary transition-colors text-primary font-bold">Home</a>
+          <a href="#" data-target="dashboard" data-i18n="dashboard" class="hover:text-primary transition-colors">Dashboard</a>
+          <a href="#" data-target="pricing" data-i18n="pricing" class="hover:text-primary transition-colors">Pricing</a>
+          <a href="#" data-target="setup" data-i18n="setupGuide" class="hover:text-primary transition-colors">Setup Guide</a>
+          <a href="#" data-target="referrals" data-i18n="referrals" class="hover:text-primary transition-colors">Referrals</a>
+          <a href="#" data-target="support" data-i18n="support" class="hover:text-primary transition-colors">Support</a>
+          <a href="#" data-target="settings" data-i18n="settings" class="hover:text-primary transition-colors">Settings</a>
+        </nav>
+      </div>
+
+      <!-- Right Action Toolbar -->
+      <div class="flex items-center gap-3">
+
+        <!-- Language Selector -->
+        <div class="relative flex items-center">
+          <span class="material-symbols-outlined text-gray-500 text-lg absolute left-2 pointer-events-none">language</span>
+          <select id="global-lang-select" class="pl-8 pr-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 text-xs font-semibold bg-surface dark:bg-slate-800 text-on-surface focus:ring-2 focus:ring-primary outline-none transition-all cursor-pointer">
+            <option value="en">English (US)</option>
+            <option value="zh">简体中文 (Chinese)</option>
+            <option value="ar">العربية (Arabic RTL)</option>
+            <option value="fr">Français (French)</option>
+          </select>
+        </div>
+
+        <!-- Dark / Light Theme Toggle -->
+        <button id="theme-toggle-btn" title="Toggle Light/Dark Theme" class="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+          <span class="material-symbols-outlined text-xl">dark_mode</span>
+        </button>
+
+        <!-- Notifications Bell -->
+        <div class="relative group">
+          <button class="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors relative">
+            <span class="material-symbols-outlined text-xl">notifications</span>
+            <span class="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-rose-500 rounded-full ring-2 ring-white dark:ring-slate-900"></span>
+          </button>
+          
+          <!-- Dropdown -->
+          <div class="absolute right-0 mt-2 w-72 bg-surface dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-4 hidden group-hover:block z-50">
+            <h4 class="font-bold text-xs uppercase tracking-wider text-slate-400 mb-3">Notifications</h4>
+            <div class="space-y-2 text-xs">
+              <div class="p-2 rounded-lg bg-primary/5 border border-primary/10">
+                <p class="font-semibold text-on-surface">New nodes added in Singapore 🇸🇬</p>
+                <p class="text-slate-500 mt-0.5">Lower ping for online lectures & gaming.</p>
+              </div>
+              <div class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">
+                <p class="font-semibold text-on-surface">Holiday Discount Active 🎄</p>
+                <p class="text-slate-500 mt-0.5">Use WINTER20 for 20% off renewals.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Account Profile / Sign In -->
+        <div class="hidden sm:flex items-center gap-2">
+          <button onclick="openModal('modal-auth')" class="px-4 py-2 text-xs font-semibold text-primary hover:bg-primary/5 rounded-full transition-colors" data-i18n="signIn">Sign In</button>
+          <button onclick="navigateTo('dashboard')" class="px-4 py-2 text-xs font-semibold bg-primary hover:bg-primary-container text-white rounded-full transition-all shadow-md shadow-primary/20" data-i18n="dashboard">Go to App</button>
+        </div>
+
+        <!-- Mobile Menu Trigger -->
+        <button onclick="document.getElementById('mobile-nav-menu').classList.toggle('hidden')" class="lg:hidden p-2 text-slate-600 dark:text-slate-300">
+          <span class="material-symbols-outlined text-2xl">menu</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile Dropdown Menu -->
+    <div id="mobile-nav-menu" class="hidden lg:hidden bg-surface dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-4 space-y-3 text-sm font-medium">
+      <a href="#" data-target="home" class="block py-1 hover:text-primary">Home</a>
+      <a href="#" data-target="dashboard" class="block py-1 hover:text-primary">Dashboard</a>
+      <a href="#" data-target="pricing" class="block py-1 hover:text-primary">Pricing</a>
+      <a href="#" data-target="setup" class="block py-1 hover:text-primary">Setup Guide</a>
+      <a href="#" data-target="referrals" class="block py-1 hover:text-primary">Referrals</a>
+      <a href="#" data-target="support" class="block py-1 hover:text-primary">Support</a>
+      <a href="#" data-target="settings" class="block py-1 hover:text-primary">Settings</a>
+    </div>
+  </header>
+
+
+  <!-- MAIN PAGE VIEWS -->
+  <main class="flex-grow">
+
+    <!-- ==================== VIEW 1: HOME PAGE ==================== -->
+    <div id="page-home" class="page-view active">
+      <!-- Hero Section -->
+      <section class="relative pt-16 pb-24 px-4 md:px-8 max-w-[1280px] mx-auto flex flex-col lg:flex-row items-center gap-12 overflow-hidden">
+        <!-- Ambient Blur Background Accent -->
+        <div class="absolute -top-32 -right-32 w-[550px] h-[550px] bg-primary/10 dark:bg-primary/20 rounded-full blur-[120px] pointer-events-none"></div>
+
+        <!-- Hero Content -->
+        <div class="w-full lg:w-1/2 flex flex-col items-start z-10">
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold border border-primary/20 mb-6">
+            <span class="w-2 h-2 rounded-full bg-primary animate-ping"></span>
+            <span>Student-Friendly Pricing • Starting ¥19.9/mo</span>
+          </div>
+
+          <h1 class="text-4xl md:text-5xl font-black text-on-surface leading-tight mb-6">
+            Internet as it should be.<br />
+            <span class="text-primary dark:text-primary-dim">Simple. Fast. Reliable.</span>
+          </h1>
+
+          <p class="text-base md:text-lg text-slate-600 dark:text-slate-300 mb-8 max-w-xl">
+            Connect seamlessly to study materials, Zoom classes, Canvas, and global networks. Built specifically for international students with zero jargon.
+          </p>
+
+          <div class="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+            <button onclick="navigateTo('pricing')" class="px-8 py-3.5 rounded-full bg-primary hover:bg-primary-container text-white font-bold text-sm shadow-xl shadow-primary/25 hover:shadow-2xl transition-all transform hover:-translate-y-0.5">
+              Get Started Now
+            </button>
+            <button onclick="navigateTo('setup')" class="px-8 py-3.5 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-on-surface font-bold text-sm transition-all">
+              See How It Works
+            </button>
+          </div>
+
+          <div class="mt-10 flex items-center gap-4 text-xs text-slate-500">
+            <div class="flex -space-x-2">
+              <div class="w-8 h-8 rounded-full bg-slate-300 border-2 border-white dark:border-slate-900 flex items-center justify-center font-bold text-slate-700 text-xs">A</div>
+              <div class="w-8 h-8 rounded-full bg-primary text-white border-2 border-white dark:border-slate-900 flex items-center justify-center font-bold text-xs">J</div>
+              <div class="w-8 h-8 rounded-full bg-secondary text-white border-2 border-white dark:border-slate-900 flex items-center justify-center font-bold text-xs">M</div>
+            </div>
+            <span>Trusted by 10,000+ international students globally</span>
+          </div>
+        </div>
+
+        <!-- Live Connection Preview Widget -->
+        <div class="w-full lg:w-1/2 relative z-10">
+          <div class="bg-surface dark:bg-slate-800/90 rounded-[28px] p-8 border border-slate-200 dark:border-slate-700 shadow-2xl shadow-primary/10 relative overflow-hidden">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-secondary/5 pointer-events-none"></div>
+
+            <div class="relative z-10 flex flex-col gap-6">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/30">
+                    <span class="material-symbols-outlined fill-1 text-2xl">vpn_key</span>
+                  </div>
+                  <div>
+                    <h3 class="font-bold text-lg text-on-surface">Secure Connection</h3>
+                    <p class="text-xs text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                      <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> WireGuard Protocol Active
+                    </p>
+                  </div>
+                </div>
+
+                <span class="vpn-status-pill flex items-center gap-2 bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 px-3 py-1 rounded-full text-xs font-semibold">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span> Active
+                </span>
+              </div>
+
+              <div class="h-px w-full bg-slate-200 dark:bg-slate-700"></div>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div class="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200/60 dark:border-slate-700">
+                  <p class="text-xs text-slate-400 mb-1">Current Server</p>
+                  <div class="flex items-center gap-2 font-bold text-sm text-on-surface">
+                    <span class="text-xl">🇸🇬</span>
+                    <span>Singapore - Edu #2</span>
+                  </div>
+                </div>
+
+                <div class="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200/60 dark:border-slate-700 flex justify-between items-center">
+                  <div>
+                    <p class="text-xs text-slate-400 mb-1">Latency</p>
+                    <p class="font-bold text-sm text-emerald-600 dark:text-emerald-400 font-mono">24 ms</p>
+                  </div>
+                  <div class="flex items-end gap-1 h-5">
+                    <div class="w-1.5 h-3 bg-emerald-500 rounded-sm"></div>
+                    <div class="w-1.5 h-4 bg-emerald-500 rounded-sm"></div>
+                    <div class="w-1.5 h-5 bg-emerald-500 rounded-sm"></div>
+                    <div class="w-1.5 h-2 bg-slate-300 rounded-sm"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="p-4 rounded-xl bg-primary/5 dark:bg-primary/10 border border-primary/20 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <span class="material-symbols-outlined text-primary text-xl">school</span>
+                  <span class="text-xs font-semibold text-on-surface">Optimized for Canvas, Zoom & Academic DBs</span>
+                </div>
+                <span class="material-symbols-outlined text-emerald-500">check_circle</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bento Grid: Why Students Love Us -->
+      <section class="py-20 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-800 px-4 md:px-8">
+        <div class="max-w-[1280px] mx-auto">
+          <div class="text-center mb-16">
+            <h2 class="text-3xl font-bold text-on-surface mb-3" data-i18n="whyStudentsLoveUs">Why Students Love Us</h2>
+            <p class="text-slate-500 max-w-xl mx-auto text-sm">Designed without the clutter. Just fast, reliable access to the educational resources you need.</p>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Bento 1 -->
+            <div class="md:col-span-2 bg-surface dark:bg-slate-800 p-8 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-xl transition-all flex flex-col justify-between relative overflow-hidden group">
+              <div>
+                <div class="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mb-4">
+                  <span class="material-symbols-outlined text-2xl">bolt</span>
+                </div>
+                <h3 class="text-xl font-bold text-on-surface mb-2" data-i18n="highSpeed">High-Speed Connectivity</h3>
+                <p class="text-slate-500 text-sm max-w-md">Stream 4K lectures and download research materials without buffering. Our network routes traffic through dedicated educational peering points.</p>
+              </div>
+            </div>
+
+            <!-- Bento 2 -->
+            <div class="bg-surface dark:bg-slate-800 p-8 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-xl transition-all flex flex-col justify-between">
+              <div>
+                <div class="w-12 h-12 rounded-2xl bg-secondary/10 text-secondary flex items-center justify-center mb-4">
+                  <span class="material-symbols-outlined text-2xl">touch_app</span>
+                </div>
+                <h3 class="text-xl font-bold text-on-surface mb-2" data-i18n="simpleSetup">Simple Setup</h3>
+                <p class="text-slate-500 text-sm">No technical jargon or complex server configurations. Just a clean interface that connects with one click.</p>
+              </div>
+            </div>
+
+            <!-- Bento 3 -->
+            <div class="bg-surface dark:bg-slate-800 p-8 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-xl transition-all flex flex-col justify-between">
+              <div>
+                <div class="w-12 h-12 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center mb-4">
+                  <span class="material-symbols-outlined text-2xl">support_agent</span>
+                </div>
+                <h3 class="text-xl font-bold text-on-surface mb-2" data-i18n="support247">24/7 Support</h3>
+                <p class="text-slate-500 text-sm">Our multilingual support team understands international student hours. We're here whenever you need help.</p>
+              </div>
+            </div>
+
+            <!-- Bento 4 -->
+            <div class="md:col-span-2 bg-gradient-to-r from-primary to-primary-container p-8 rounded-3xl text-white shadow-xl flex flex-col sm:flex-row items-center justify-between gap-6">
+              <div>
+                <h3 class="text-xl font-bold mb-2" data-i18n="digitalInclusion">Digital Inclusion First</h3>
+                <p class="text-primary-dim text-sm max-w-md">We believe a VPN is a bridge, not a barrier. Experience an open internet focused on education and social connection.</p>
+              </div>
+              <button onclick="navigateTo('dashboard')" class="px-6 py-3 rounded-full bg-white text-primary font-bold text-sm hover:bg-slate-100 transition-colors whitespace-nowrap shadow-lg">
+                Try Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Supported Devices Footer Bar -->
+      <section class="py-12 px-4 md:px-8 max-w-[1280px] mx-auto text-center border-t border-slate-200 dark:border-slate-800">
+        <p class="text-xs font-bold uppercase tracking-widest text-slate-400 mb-8">Available across all your student devices</p>
+        <div class="flex flex-wrap justify-center items-center gap-10 md:gap-16 opacity-70">
+          <div class="flex flex-col items-center gap-2">
+            <span class="material-symbols-outlined text-4xl">desktop_windows</span>
+            <span class="text-xs font-semibold">Windows</span>
+          </div>
+          <div class="flex flex-col items-center gap-2">
+            <span class="material-symbols-outlined text-4xl">laptop_mac</span>
+            <span class="text-xs font-semibold">macOS</span>
+          </div>
+          <div class="flex flex-col items-center gap-2">
+            <span class="material-symbols-outlined text-4xl">phone_iphone</span>
+            <span class="text-xs font-semibold">iOS</span>
+          </div>
+          <div class="flex flex-col items-center gap-2">
+            <span class="material-symbols-outlined text-4xl">android</span>
+            <span class="text-xs font-semibold">Android</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+
+    <!-- ==================== VIEW 2: DASHBOARD PAGE ==================== -->
+    <div id="page-dashboard" class="page-view">
+      <div class="max-w-[1280px] mx-auto px-4 md:px-8 py-10 space-y-8">
+        
+        <!-- Welcome Header Banner -->
+        <section class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-surface dark:bg-slate-800 p-6 md:p-8 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
+          <div>
+            <h1 class="text-2xl md:text-3xl font-bold text-on-surface" data-i18n="welcome">Welcome back, Student!</h1>
+            <p class="text-slate-500 text-sm mt-1" data-i18n="welcomeSub">Manage your connection and account details below.</p>
+          </div>
+          <div class="flex items-center gap-3 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-4 py-2 rounded-full border border-emerald-500/30 text-xs font-bold">
+            <span class="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse"></span>
+            <span data-i18n="subActive">Subscription: Active</span>
+          </div>
+        </section>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          
+          <!-- Left Column (2 Cols) -->
+          <div class="lg:col-span-2 space-y-8">
+            
+            <!-- Cards Grid: Plan + Data Usage Gauge -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              <!-- Current Plan Card -->
+              <div class="bg-surface dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+                <div>
+                  <div class="flex justify-between items-start mb-4">
+                    <div class="bg-primary/10 p-3 rounded-2xl text-primary">
+                      <span class="material-symbols-outlined text-2xl">workspace_premium</span>
+                    </div>
+                    <span class="bg-secondary/10 text-secondary text-[11px] font-bold px-2.5 py-1 rounded-full">Best Value</span>
+                  </div>
+                  <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1" data-i18n="currentPlan">Current Plan</h3>
+                  <p class="text-2xl font-bold text-on-surface mb-6" data-i18n="planName">Student Standard</p>
+                </div>
+
+                <div class="border-t border-slate-200 dark:border-slate-700 pt-4 flex justify-between items-center">
+                  <div>
+                    <p class="text-xs text-slate-400" data-i18n="expiresOn">Expires On</p>
+                    <p class="text-sm font-bold text-on-surface">2025-01-20</p>
+                  </div>
+                  <button onclick="openCheckoutModal('Student Standard Renewal', '¥29.9/mo')" class="px-4 py-2 rounded-xl bg-primary hover:bg-primary-container text-white text-xs font-bold transition-all shadow-md shadow-primary/20">
+                    Renew Plan
+                  </button>
+                </div>
+              </div>
+
+              <!-- Circular Data Usage Gauge Card -->
+              <div class="bg-surface dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col items-center justify-center relative">
+                <div class="absolute top-6 left-6">
+                  <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400" data-i18n="dataUsage">Data Usage</h3>
+                </div>
+
+                <div class="relative w-36 h-36 mt-6 flex items-center justify-center">
+                  <svg class="w-full h-full circular-progress" viewBox="0 0 100 100">
+                    <circle class="text-slate-200 dark:text-slate-700 stroke-current" cx="50" cy="50" r="40" stroke-width="8" fill="transparent"></circle>
+                    <circle id="data-gauge-circle" class="text-primary stroke-current" cx="50" cy="50" r="40" stroke-width="8" stroke-dasharray="251.2" stroke-dashoffset="75.36" stroke-linecap="round" fill="transparent"></circle>
+                  </svg>
+                  <div class="absolute inset-0 flex flex-col items-center justify-center">
+                    <span id="data-gauge-percentage" class="text-2xl font-black text-on-surface">85GB</span>
+                    <span class="text-xs text-slate-400">of 120GB</span>
+                  </div>
+                </div>
+
+                <p class="mt-4 text-xs font-medium text-slate-500" data-i18n="resetsIn">Resets in 12 days</p>
+              </div>
+            </div>
+
+            <!-- Quick Connect Actions Bento Card -->
+            <div class="bg-surface dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
+              <h3 class="text-lg font-bold text-on-surface mb-4" data-i18n="quickActions">Quick Connect Actions</h3>
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <button onclick="navigateTo('setup')" class="flex flex-col items-center gap-2 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 border border-slate-200/60 dark:border-slate-700 transition-all group">
+                  <div class="p-3 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 group-hover:bg-primary group-hover:text-white transition-colors">
+                    <span class="material-symbols-outlined text-xl">menu_book</span>
+                  </div>
+                  <span class="text-xs font-semibold text-center" data-i18n="setupGuide">Setup Guide</span>
+                </button>
+
+                <button id="btn-copy-sub-url" class="flex flex-col items-center gap-2 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 border border-slate-200/60 dark:border-slate-700 transition-all group">
+                  <div class="p-3 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 group-hover:bg-primary group-hover:text-white transition-colors">
+                    <span class="material-symbols-outlined text-xl">content_copy</span>
+                  </div>
+                  <span class="text-xs font-semibold text-center" data-i18n="copySubUrl">Copy Sub URL</span>
+                </button>
+
+                <button onclick="openQrModal()" class="flex flex-col items-center gap-2 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 border border-slate-200/60 dark:border-slate-700 transition-all group">
+                  <div class="p-3 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 group-hover:bg-primary group-hover:text-white transition-colors">
+                    <span class="material-symbols-outlined text-xl">qr_code</span>
+                  </div>
+                  <span class="text-xs font-semibold text-center" data-i18n="showQrCode">Show QR Code</span>
+                </button>
+
+                <button onclick="toggleLiveChat()" class="flex flex-col items-center gap-2 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 border border-slate-200/60 dark:border-slate-700 transition-all group">
+                  <div class="p-3 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 group-hover:bg-primary group-hover:text-white transition-colors">
+                    <span class="material-symbols-outlined text-xl">support_agent</span>
+                  </div>
+                  <span class="text-xs font-semibold text-center" data-i18n="liveSupport">Live Support</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Sidebar Column: VPN Controller & Announcements -->
+          <div class="space-y-8">
+            
+            <!-- Connection Control Card -->
+            <div class="bg-surface dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-lg space-y-6">
+              <div class="flex justify-between items-center">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-400" data-i18n="secureConnection">Connection Status</span>
+                <button onclick="openModal('modal-server-select')" class="text-xs font-bold text-primary hover:underline flex items-center gap-1">
+                  <span>Change Server</span>
+                  <span class="material-symbols-outlined text-sm">swap_horiz</span>
+                </button>
+              </div>
+
+              <!-- Central Power Button & Info -->
+              <div class="flex flex-col items-center text-center p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-700 space-y-4">
+                <div class="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                  <span class="material-symbols-outlined fill-1 text-3xl">vpn_key</span>
+                </div>
+                <div>
+                  <h4 class="vpn-status-text font-bold text-lg text-on-surface">Disconnected</h4>
+                  <p class="vpn-server-display text-xs text-slate-500 font-medium">Hong Kong Server #4</p>
+                </div>
+              </div>
+
+              <!-- Speed Metrics -->
+              <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                <div class="p-2 rounded-xl bg-slate-100 dark:bg-slate-700/50">
+                  <p class="text-slate-400 text-[10px]">Download</p>
+                  <p id="vpn-download-stat" class="font-bold font-mono text-emerald-600 dark:text-emerald-400">0.0 Mbps</p>
+                </div>
+                <div class="p-2 rounded-xl bg-slate-100 dark:bg-slate-700/50">
+                  <p class="text-slate-400 text-[10px]">Upload</p>
+                  <p id="vpn-upload-stat" class="font-bold font-mono text-blue-600 dark:text-blue-400">0.0 Mbps</p>
+                </div>
+                <div class="p-2 rounded-xl bg-slate-100 dark:bg-slate-700/50">
+                  <p class="text-slate-400 text-[10px]">Duration</p>
+                  <p id="vpn-timer-stat" class="font-bold font-mono text-slate-700 dark:text-slate-200">00:00</p>
+                </div>
+              </div>
+
+              <button class="vpn-toggle-btn w-full py-4 rounded-xl font-bold bg-primary hover:bg-primary-container text-white shadow-lg shadow-primary/25 transition-all flex items-center justify-center gap-2">
+                <span class="material-symbols-outlined text-2xl">power_settings_new</span>
+                <span>Connect Now</span>
+              </button>
+            </div>
+
+            <!-- Recent Announcements Card -->
+            <div class="bg-surface dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-secondary">campaign</span>
+                <h3 class="font-bold text-on-surface" data-i18n="announcements">Announcements</h3>
+              </div>
+
+              <div class="space-y-3 text-xs divide-y divide-slate-100 dark:divide-slate-700">
+                <div class="pt-2">
+                  <span class="text-primary font-bold">Today</span>
+                  <p class="font-semibold text-on-surface mt-0.5">New nodes added in Singapore</p>
+                  <p class="text-slate-400">Experience lower latency for gaming & lectures.</p>
+                </div>
+                <div class="pt-3">
+                  <span class="text-slate-400">Dec 15, 2024</span>
+                  <p class="font-semibold text-on-surface mt-0.5">Holiday Discount Code</p>
+                  <p class="text-slate-400">Use code WINTER20 at checkout for renewals.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ==================== VIEW 3: PRICING PAGE ==================== -->
+    <div id="page-pricing" class="page-view">
+      <div class="max-w-[1280px] mx-auto px-4 md:px-8 py-12 space-y-12">
+        
+        <div class="text-center max-w-2xl mx-auto space-y-4">
+          <h1 class="text-3xl md:text-4xl font-bold text-on-surface">Flexible Plans for Every Student</h1>
+          <p class="text-slate-500 text-sm md:text-base">Simple, transparent pricing to keep you connected worldwide. No hidden fees.</p>
+
+          <!-- Billing Period Switcher -->
+          <div class="inline-flex items-center p-1 bg-slate-200 dark:bg-slate-800 rounded-full text-xs font-bold">
+            <button class="px-6 py-2 rounded-full bg-surface dark:bg-slate-700 text-primary shadow-sm">Monthly</button>
+            <button class="px-6 py-2 rounded-full text-slate-500 hover:text-primary transition-colors">Annually <span class="text-emerald-600 font-extrabold ml-1">-20%</span></button>
+          </div>
+        </div>
+
+        <!-- 4 Tier Pricing Cards Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          
+          <!-- Card 1: New User Trial -->
+          <div class="bg-surface dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between hover:shadow-xl transition-all">
+            <div>
+              <h3 class="font-bold text-lg text-on-surface mb-2">New User Trial</h3>
+              <div class="flex items-baseline gap-1 mb-4">
+                <span class="text-3xl font-black text-primary">¥9.9</span>
+                <span class="text-xs text-slate-400">/first month</span>
+              </div>
+
+              <ul class="space-y-3 text-xs text-slate-600 dark:text-slate-300 mb-8">
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> Trial access to all servers</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> 20GB Data / Month</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> 1 Device Connected</li>
+              </ul>
+            </div>
+            <button onclick="openCheckoutModal('New User Trial', '¥9.9/first mo')" class="w-full py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+              Start Trial
+            </button>
+          </div>
+
+          <!-- Card 2: Student Lite -->
+          <div class="bg-surface dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between hover:shadow-xl transition-all">
+            <div>
+              <h3 class="font-bold text-lg text-on-surface mb-2">Student Lite</h3>
+              <div class="flex items-baseline gap-1 mb-4">
+                <span class="text-3xl font-black text-primary">¥19.9</span>
+                <span class="text-xs text-slate-400">/month</span>
+              </div>
+
+              <ul class="space-y-3 text-xs text-slate-600 dark:text-slate-300 mb-8">
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> Access to student network</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> 50GB High-speed Data</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> 2 Devices Connected</li>
+              </ul>
+            </div>
+            <button onclick="openCheckoutModal('Student Lite', '¥19.9/mo')" class="w-full py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+              Choose Lite
+            </button>
+          </div>
+
+          <!-- Card 3: Student Standard (Highlighted) -->
+          <div class="bg-surface dark:bg-slate-800 rounded-3xl p-6 border-2 border-primary shadow-xl flex flex-col justify-between relative transform lg:-translate-y-2">
+            <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-md">
+              Recommended for Students
+            </div>
+            <div>
+              <h3 class="font-bold text-lg text-on-surface mb-2 mt-2">Student Standard</h3>
+              <div class="flex items-baseline gap-1 mb-4">
+                <span class="text-3xl font-black text-primary">¥29.9</span>
+                <span class="text-xs text-slate-400">/month</span>
+              </div>
+
+              <ul class="space-y-3 text-xs text-slate-600 dark:text-slate-300 mb-8">
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> Premium high-speed nodes</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> 120GB High-speed Data</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> 3 Devices Connected</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> Priority 24/7 Support</li>
+              </ul>
+            </div>
+            <button onclick="openCheckoutModal('Student Standard', '¥29.9/mo')" class="w-full py-3 rounded-xl bg-primary hover:bg-primary-container text-white text-xs font-bold shadow-md shadow-primary/20 transition-all">
+              Choose Standard
+            </button>
+          </div>
+
+          <!-- Card 4: Student Plus -->
+          <div class="bg-surface dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between hover:shadow-xl transition-all">
+            <div>
+              <h3 class="font-bold text-lg text-on-surface mb-2">Student Plus</h3>
+              <div class="flex items-baseline gap-1 mb-4">
+                <span class="text-3xl font-black text-primary">¥49.9</span>
+                <span class="text-xs text-slate-400">/month</span>
+              </div>
+
+              <ul class="space-y-3 text-xs text-slate-600 dark:text-slate-300 mb-8">
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> Global optimized routing</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> 300GB Ultra Data</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> 5 Devices Connected</li>
+                <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-base">check_circle</span> VIP Dedicated Support</li>
+              </ul>
+            </div>
+            <button onclick="openCheckoutModal('Student Plus', '¥49.9/mo')" class="w-full py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+              Choose Plus
+            </button>
+          </div>
+        </div>
+
+        <div class="text-center pt-6">
+          <div class="inline-flex items-center gap-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-4 py-2 rounded-full text-xs font-bold border border-emerald-500/20">
+            <span class="material-symbols-outlined text-sm">verified</span>
+            <span>7-Day Unconditional Money-Back Guarantee</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ==================== VIEW 4: SETUP GUIDE PAGE ==================== -->
+    <div id="page-setup" class="page-view">
+      <div class="max-w-[1280px] mx-auto px-4 md:px-8 py-10 space-y-8">
+        
+        <header class="text-center max-w-2xl mx-auto space-y-3">
+          <h1 class="text-3xl font-bold text-on-surface">Setup & Subscription Guide</h1>
+          <p class="text-slate-500 text-sm">Get connected in under 2 minutes. Choose your device below for step-by-step instructions.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          
+          <!-- Left Column: OS Tabs & Instructions (8 Cols) -->
+          <div class="lg:col-span-8 space-y-6">
+            
+            <!-- OS Switching Tabs -->
+            <div class="bg-surface dark:bg-slate-800 p-2 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex gap-2 overflow-x-auto">
+              <button data-os="win" class="os-tab-btn flex-1 min-w-[110px] py-3 px-4 rounded-xl bg-primary text-white font-semibold text-sm transition-all shadow-sm">
+                💻 Windows
+              </button>
+              <button data-os="mac" class="os-tab-btn flex-1 min-w-[110px] py-3 px-4 rounded-xl text-on-surface-variant hover:bg-slate-100 dark:hover:bg-slate-700 font-semibold text-sm transition-all">
+                🍎 macOS
+              </button>
+              <button data-os="android" class="os-tab-btn flex-1 min-w-[110px] py-3 px-4 rounded-xl text-on-surface-variant hover:bg-slate-100 dark:hover:bg-slate-700 font-semibold text-sm transition-all">
+                🤖 Android
+              </button>
+              <button data-os="ios" class="os-tab-btn flex-1 min-w-[110px] py-3 px-4 rounded-xl text-on-surface-variant hover:bg-slate-100 dark:hover:bg-slate-700 font-semibold text-sm transition-all">
+                📱 iPhone / iOS
+              </button>
+            </div>
+
+            <!-- Guide Content Box -->
+            <div class="bg-surface dark:bg-slate-800 p-6 md:p-8 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-6">
+              
+              <!-- Windows Guide -->
+              <div id="guide-win" class="os-guide-content space-y-6">
+                <h3 class="text-xl font-bold text-on-surface">Windows 10/11 Setup</h3>
+                <div class="space-y-4 text-sm">
+                  <div class="flex gap-4">
+                    <div class="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold text-xs flex-shrink-0">1</div>
+                    <div>
+                      <p class="font-bold text-on-surface">Download CheapVPN App</p>
+                      <p class="text-slate-500 text-xs mt-0.5">Click below to get the official setup installer (64-bit).</p>
+                      <button onclick="showToast('Downloading CheapVPN_Windows_v2.4.exe...', 'info')" class="mt-2 px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-xs font-bold text-primary flex items-center gap-2 hover:bg-slate-200">
+                        <span class="material-symbols-outlined text-sm">download</span> Download for Windows
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="flex gap-4">
+                    <div class="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 text-on-surface flex items-center justify-center font-bold text-xs flex-shrink-0">2</div>
+                    <div>
+                      <p class="font-bold text-on-surface">Install & One-Click Import</p>
+                      <p class="text-slate-500 text-xs">Run installer, launch app, and click "Import Subscription URL" using your unique link on the right.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- macOS Guide -->
+              <div id="guide-mac" class="os-guide-content hidden space-y-6">
+                <h3 class="text-xl font-bold text-on-surface">macOS (Apple Silicon & Intel) Setup</h3>
+                <div class="space-y-4 text-sm">
+                  <div class="flex gap-4">
+                    <div class="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold text-xs flex-shrink-0">1</div>
+                    <div>
+                      <p class="font-bold text-on-surface">Download DMG Package</p>
+                      <button onclick="showToast('Downloading CheapVPN_Mac_v2.4.dmg...', 'info')" class="mt-2 px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-xs font-bold text-primary flex items-center gap-2 hover:bg-slate-200">
+                        <span class="material-symbols-outlined text-sm">download</span> Download for macOS (.dmg)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Android Guide -->
+              <div id="guide-android" class="os-guide-content hidden space-y-6">
+                <h3 class="text-xl font-bold text-on-surface">Android Setup</h3>
+                <p class="text-slate-500 text-sm">Scan the QR code on the right with your phone camera or download APK directly.</p>
+              </div>
+
+              <!-- iOS Guide -->
+              <div id="guide-ios" class="os-guide-content hidden space-y-6">
+                <h3 class="text-xl font-bold text-on-surface">iPhone / iPad Setup</h3>
+                <p class="text-slate-500 text-sm">Get CheapVPN on the App Store or import your subscription link in Clash / Shadowrocket.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Column: Unique Connection Link Box (4 Cols) -->
+          <div class="lg:col-span-4 space-y-6">
+            <div class="bg-surface dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+              <h3 class="font-bold text-on-surface flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">link</span>
+                <span>Your Connection Link</span>
+              </h3>
+              <p class="text-xs text-slate-500">This secret link grants instant access to your VPN nodes.</p>
+
+              <div class="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-xs text-slate-600 dark:text-slate-300 truncate">
+                cheapvpn://connect?token=stu_89fa2bc837...
+              </div>
+
+              <div class="flex gap-2">
+                <button id="btn-copy-sub-url" class="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary-container text-white text-xs font-bold transition-all shadow-md shadow-primary/20 flex items-center justify-center gap-1">
+                  <span class="material-symbols-outlined text-sm">content_copy</span> Copy Link
+                </button>
+                <button onclick="openQrModal()" class="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-700 text-xs font-bold text-on-surface hover:bg-slate-200">
+                  QR Code
+                </button>
+              </div>
+
+              <div class="pt-4 border-t border-slate-200 dark:border-slate-700">
+                <button onclick="showToast('Subscription token reset. Re-import required on all devices.', 'info')" class="w-full py-2.5 rounded-xl bg-rose-500/10 text-rose-600 text-xs font-bold border border-rose-500/20 hover:bg-rose-500/20 transition-colors">
+                  Reset Subscription Link
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ==================== VIEW 5: REFERRALS PAGE ==================== -->
+    <div id="page-referrals" class="page-view">
+      <div class="max-w-[1280px] mx-auto px-4 md:px-8 py-10 space-y-8">
+        
+        <header class="text-center max-w-2xl mx-auto space-y-3">
+          <h1 class="text-3xl font-bold text-on-surface">Invite Friends & Earn Rewards</h1>
+          <p class="text-slate-500 text-sm">Share your link. Give your friends a fast connection and earn $15 credit for every successful referral.</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          
+          <!-- Referral Link Box (2 Cols) -->
+          <div class="md:col-span-2 bg-surface dark:bg-slate-800 p-8 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between space-y-6">
+            <div>
+              <h3 class="text-xl font-bold text-on-surface mb-1">Your Referral Tools</h3>
+              <p class="text-slate-500 text-xs">Share your code to unlock free subscription months.</p>
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-4">
+              <div class="flex-1 space-y-1">
+                <label class="text-xs font-bold text-slate-400">Referral Link</label>
+                <div class="flex bg-slate-100 dark:bg-slate-900 rounded-xl p-1 border border-slate-200 dark:border-slate-700">
+                  <input readonly value="https://cheapvpn.com/ref/STUDENT2024" class="bg-transparent border-none focus:ring-0 text-xs text-on-surface w-full px-2 font-mono outline-none" />
+                  <button id="btn-copy-ref-link" class="px-4 py-2 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary-container transition-colors">
+                    Copy
+                  </button>
+                </div>
+              </div>
+
+              <div class="sm:w-1/3 space-y-1">
+                <label class="text-xs font-bold text-slate-400">Referral Code</label>
+                <div class="flex bg-slate-100 dark:bg-slate-900 rounded-xl p-1 border border-slate-200 dark:border-slate-700">
+                  <input readonly value="STUDENT2024" class="bg-transparent border-none focus:ring-0 text-xs font-bold text-on-surface w-full px-2 outline-none" />
+                  <button id="btn-copy-ref-code" class="p-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-on-surface hover:bg-slate-300">
+                    <span class="material-symbols-outlined text-sm">content_copy</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Earnings Stat Card (1 Col) -->
+          <div class="bg-gradient-to-br from-primary to-primary-container p-6 rounded-3xl text-white shadow-xl flex flex-col justify-between">
+            <div class="flex justify-between items-start">
+              <span class="text-xs font-bold uppercase tracking-wider text-primary-dim">Available Credit</span>
+              <span class="material-symbols-outlined text-2xl">account_balance_wallet</span>
+            </div>
+            <div>
+              <div class="text-4xl font-black mb-1">$45.00</div>
+              <button onclick="showToast('Redeemed $45.00 credit to your renewal invoice!', 'success')" class="w-full py-2.5 rounded-xl bg-white text-primary font-bold text-xs hover:bg-slate-100 transition-colors shadow-md">
+                Redeem Credit Now
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Referral History Table -->
+        <div class="bg-surface dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+          <h3 class="font-bold text-on-surface text-lg">Referral History</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead>
+                <tr class="border-b border-slate-200 dark:border-slate-700 text-slate-400 uppercase font-bold">
+                  <th class="pb-3">Friend</th>
+                  <th class="pb-3">Date</th>
+                  <th class="pb-3">Status</th>
+                  <th class="pb-3 text-right">Reward</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 dark:divide-slate-700 font-medium">
+                <tr>
+                  <td class="py-3 font-semibold text-on-surface">Jian Li (li.j@nyu.edu)</td>
+                  <td class="py-3 text-slate-400">Oct 24, 2024</td>
+                  <td class="py-3"><span class="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">Successful</span></td>
+                  <td class="py-3 text-right font-bold text-emerald-600">+$15.00</td>
+                </tr>
+                <tr>
+                  <td class="py-3 font-semibold text-on-surface">Sarah Wang (wang.s@mit.edu)</td>
+                  <td class="py-3 text-slate-400">Oct 21, 2024</td>
+                  <td class="py-3"><span class="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 font-bold">Pending Trial</span></td>
+                  <td class="py-3 text-right text-slate-400">--</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ==================== VIEW 6: SUPPORT PAGE ==================== -->
+    <div id="page-support" class="page-view">
+      <div class="max-w-[1280px] mx-auto px-4 md:px-8 py-10 space-y-10">
+        
+        <section class="text-center max-w-2xl mx-auto space-y-4">
+          <h1 class="text-3xl md:text-4xl font-bold text-on-surface" data-i18n="supportHeader">How can we help you today?</h1>
+          <div class="relative max-w-xl mx-auto">
+            <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl">search</span>
+            <input id="support-search-input" type="text" placeholder="Search knowledge base articles..." class="w-full h-12 pl-12 pr-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-surface dark:bg-slate-800 text-sm focus:ring-2 focus:ring-primary outline-none transition-all" />
+          </div>
+        </section>
+
+        <!-- Ticket Submission & Diagnostic Tool -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div class="lg:col-span-2 bg-surface dark:bg-slate-800 p-8 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-6">
+            <div class="flex justify-between items-center">
+              <h3 class="font-bold text-xl text-on-surface">Submit Support Ticket</h3>
+              <button onclick="runNetworkDiagnostics()" class="px-4 py-2 rounded-full bg-secondary/10 text-secondary font-bold text-xs flex items-center gap-2 hover:bg-secondary/20 transition-colors">
+                <span class="material-symbols-outlined text-base">health_and_safety</span>
+                Run Auto Diagnostics
+              </button>
+            </div>
+
+            <form onsubmit="event.preventDefault(); showToast('Support ticket submitted successfully! Ticket ID: #TKT-1089', 'success');" class="space-y-4 text-xs font-semibold">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-slate-400 mb-1">Issue Category</label>
+                  <select class="w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-on-surface px-3">
+                    <option>Connection Drops / Speed Issue</option>
+                    <option>Billing & Subscription</option>
+                    <option>Account Setup Help</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-slate-400 mb-1">Device OS</label>
+                  <select class="w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-on-surface px-3">
+                    <option>Windows 10/11</option>
+                    <option>macOS</option>
+                    <option>iOS</option>
+                    <option>Android</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-slate-400 mb-1">Subject</label>
+                <input required type="text" placeholder="Brief summary of your inquiry..." class="w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-on-surface px-3" />
+              </div>
+
+              <div>
+                <label class="block text-slate-400 mb-1">Description</label>
+                <textarea required rows="4" placeholder="Detailed description of the issue..." class="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-on-surface resize-none"></textarea>
+              </div>
+
+              <button type="submit" class="px-6 py-3 rounded-xl bg-primary hover:bg-primary-container text-white font-bold text-xs shadow-md shadow-primary/20 transition-all">
+                Submit Ticket
+              </button>
+            </form>
+          </div>
+
+          <!-- Ticket History Sidebar -->
+          <div class="bg-surface dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+            <h3 class="font-bold text-on-surface">Ticket History</h3>
+            <div id="support-tickets-list" class="space-y-3"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ==================== VIEW 7: SETTINGS PAGE ==================== -->
+    <div id="page-settings" class="page-view">
+      <div class="max-w-[1280px] mx-auto px-4 md:px-8 py-10 space-y-8">
+        <h1 class="text-2xl font-bold text-on-surface">Account Settings</h1>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+          
+          <!-- Sidebar Navigation -->
+          <div class="bg-surface dark:bg-slate-800 p-4 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-2 text-sm font-semibold">
+            <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-xl bg-primary text-white">
+              <span class="material-symbols-outlined text-lg">person</span> Profile Details
+            </a>
+            <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700">
+              <span class="material-symbols-outlined text-lg">lock</span> Security & 2FA
+            </a>
+            <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700">
+              <span class="material-symbols-outlined text-lg">devices</span> Connected Devices
+            </a>
+          </div>
+
+          <!-- Settings Main Form Content (2 Cols) -->
+          <div class="md:col-span-2 space-y-8">
+            <form id="form-profile-settings" class="bg-surface dark:bg-slate-800 p-6 md:p-8 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-6">
+              <h3 class="font-bold text-lg text-on-surface">Profile Settings</h3>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-semibold">
+                <div>
+                  <label class="block text-slate-400 mb-1">Full Name</label>
+                  <input type="text" value="Chen Wei" class="w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 text-on-surface" />
+                </div>
+                <div>
+                  <label class="block text-slate-400 mb-1">Student Email (.edu)</label>
+                  <input type="email" value="chen.wei@student.edu" class="w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 text-on-surface" />
+                </div>
+              </div>
+
+              <div class="flex justify-end">
+                <button type="submit" class="px-6 py-2.5 rounded-xl bg-primary text-white font-bold text-xs hover:bg-primary-container transition-all">
+                  Save Changes
+                </button>
+              </div>
+            </form>
+
+            <!-- Connected Devices List -->
+            <div class="bg-surface dark:bg-slate-800 p-6 md:p-8 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+              <h3 class="font-bold text-lg text-on-surface">Active Connected Devices</h3>
+              <div id="settings-devices-list" class="space-y-3"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+
+  <!-- FOOTER -->
+  <footer class="bg-surface dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 mt-auto py-12 px-4 md:px-8">
+    <div class="max-w-[1280px] mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+      <div>
+        <div class="font-black text-xl text-primary tracking-tight mb-2">CheapVPN</div>
+        <p class="text-xs text-slate-500">© 2024 CheapVPN. Connecting students to the world safely & affordably.</p>
+      </div>
+
+      <div class="flex flex-wrap gap-6 text-xs font-semibold text-slate-500">
+        <a href="#" data-target="home" class="hover:text-primary">Company</a>
+        <a href="#" data-target="pricing" class="hover:text-primary">Products</a>
+        <a href="#" data-target="support" class="hover:text-primary">Support</a>
+        <a href="#" data-target="setup" class="hover:text-primary">Setup Guide</a>
+        <a href="#" data-target="referrals" class="hover:text-primary">Legal & Privacy</a>
+      </div>
+    </div>
+  </footer>
+
+
+  <!-- MODALS & OVERLAYS -->
+
+  <!-- Modal 1: Server Selector -->
+  <div id="modal-server-select" class="modal-overlay fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-surface dark:bg-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700">
+      <div class="flex justify-between items-center">
+        <h3 class="font-bold text-lg text-on-surface">Select High-Speed Server</h3>
+        <button data-close-modal class="p-1 rounded-full text-slate-400 hover:text-slate-600">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <div id="server-list-container" class="space-y-2 max-h-[350px] overflow-y-auto pr-1"></div>
+    </div>
+  </div>
+
+  <!-- Modal 2: QR Code Subscription -->
+  <div id="modal-qr-code" class="modal-overlay fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-surface dark:bg-slate-800 rounded-3xl max-w-sm w-full p-6 text-center space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700">
+      <div class="flex justify-between items-center">
+        <h3 class="font-bold text-on-surface">Scan Subscription QR</h3>
+        <button data-close-modal class="p-1 rounded-full text-slate-400">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <div class="p-4 bg-white rounded-2xl inline-block border border-slate-200 shadow-inner">
+        <!-- SVG Clean QR Code Graphic -->
+        <svg class="w-44 h-44 mx-auto" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="100" height="100" fill="white"/>
+          <path d="M10 10H40V40H10V10ZM15 15V35H35V15H15Z" fill="#0058BC"/>
+          <path d="M60 10H90V40H60V10ZM65 15V35H85V15H65Z" fill="#0058BC"/>
+          <path d="M10 60H40V90H10V60ZM15 65V85H35V65H15Z" fill="#0058BC"/>
+          <rect x="20" y="20" width="10" height="10" fill="#0058BC"/>
+          <rect x="70" y="20" width="10" height="10" fill="#0058BC"/>
+          <rect x="20" y="70" width="10" height="10" fill="#0058BC"/>
+          <rect x="50" y="50" width="15" height="15" fill="#0058BC"/>
+          <rect x="70" y="65" width="20" height="20" fill="#0058BC"/>
+          <rect x="45" y="75" width="15" height="15" fill="#0058BC"/>
+        </svg>
+      </div>
+
+      <p class="text-xs text-slate-500">Open CheapVPN mobile app on iOS/Android and scan to sync nodes instantly.</p>
+    </div>
+  </div>
+
+  <!-- Modal 3: Checkout Plan Modal -->
+  <div id="modal-checkout" class="modal-overlay fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-surface dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 space-y-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+      <div class="flex justify-between items-center">
+        <h3 class="font-bold text-lg text-on-surface">Confirm Subscription</h3>
+        <button data-close-modal class="p-1 rounded-full text-slate-400">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <div class="p-4 rounded-2xl bg-primary/10 border border-primary/20 flex justify-between items-center">
+        <div>
+          <h4 id="checkout-plan-name" class="font-bold text-sm text-primary">Student Standard</h4>
+          <p class="text-xs text-slate-500">Auto-renews monthly. Cancel anytime.</p>
+        </div>
+        <span id="checkout-plan-price" class="font-black text-lg text-primary">¥29.9/mo</span>
+      </div>
+
+      <div class="space-y-2 text-xs font-semibold">
+        <label class="text-slate-400">Payment Method</label>
+        <div class="grid grid-cols-3 gap-2">
+          <button class="p-3 rounded-xl border border-primary bg-primary/5 text-primary text-center font-bold">Alipay (支付宝)</button>
+          <button class="p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-center font-bold text-slate-600 dark:text-slate-300">WeChat Pay</button>
+          <button class="p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-center font-bold text-slate-600 dark:text-slate-300">Credit Card</button>
+        </div>
+      </div>
+
+      <button onclick="closeModal('modal-checkout'); showToast('Subscription activated successfully! Enjoy your VPN.', 'success');" class="w-full py-3 rounded-xl bg-primary text-white font-bold text-xs shadow-lg shadow-primary/25">
+        Pay & Activate Plan
+      </button>
+    </div>
+  </div>
+
+  <!-- Modal 4: Network Diagnostics Simulation -->
+  <div id="modal-diagnostics" class="modal-overlay fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-surface dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700">
+      <div class="flex justify-between items-center">
+        <h3 class="font-bold text-on-surface">Network Diagnostics</h3>
+        <button data-close-modal class="p-1 rounded-full text-slate-400">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <div class="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
+        <div id="diag-progress-bar" class="bg-primary h-full w-0 transition-all duration-300"></div>
+      </div>
+
+      <div id="diag-log-container" class="bg-slate-900 text-emerald-400 p-4 rounded-xl font-mono text-xs max-h-56 overflow-y-auto space-y-1"></div>
+
+      <button data-close-modal class="w-full py-2.5 rounded-xl bg-slate-100 dark:bg-slate-700 text-xs font-bold">Close</button>
+    </div>
+  </div>
+
+  <!-- Modal 5: Auth Sign In / Sign Up Modal -->
+  <div id="modal-auth" class="modal-overlay fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-surface dark:bg-slate-800 rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700">
+      <div class="flex justify-between items-center">
+        <h3 class="font-bold text-lg text-on-surface">Sign In to CheapVPN</h3>
+        <button data-close-modal class="p-1 rounded-full text-slate-400">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <form onsubmit="event.preventDefault(); closeModal('modal-auth'); showToast('Signed in successfully as Chen Wei', 'success');" class="space-y-3 text-xs font-semibold">
+        <div>
+          <label class="text-slate-400 mb-1 block">Student Email</label>
+          <input required type="email" value="chen.wei@student.edu" class="w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 text-on-surface" />
+        </div>
+        <div>
+          <label class="text-slate-400 mb-1 block">Password</label>
+          <input required type="password" value="••••••••••••" class="w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 text-on-surface" />
+        </div>
+        <button type="submit" class="w-full py-3 rounded-xl bg-primary text-white font-bold text-xs shadow-md shadow-primary/25">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Drawer: Live Support Chat -->
+  <div id="live-chat-drawer" class="fixed top-0 right-0 bottom-0 w-80 md:w-96 bg-surface dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 shadow-2xl transform translate-x-full transition-transform duration-300 z-50 flex flex-col">
+    <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-primary text-white">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined">support_agent</span>
+        <h3 class="font-bold text-sm">24/7 Student Live Support</h3>
+      </div>
+      <button onclick="toggleLiveChat()" class="p-1 text-white/80 hover:text-white">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+
+    <div id="chat-messages-body" class="flex-1 p-4 overflow-y-auto space-y-3 flex flex-col text-xs">
+      <div class="self-start bg-slate-100 dark:bg-slate-700 p-3 rounded-2xl rounded-tl-none text-on-surface max-w-[85%]">
+        Hello! I'm CheapVPN's AI assistant. How can I help you with your connection or subscription today?
+      </div>
+    </div>
+
+    <div class="p-3 border-t border-slate-200 dark:border-slate-700 flex gap-2">
+      <input id="chat-input-text" type="text" placeholder="Type your message..." onkeydown="if(event.key==='Enter') sendChatMessage()" class="flex-1 h-10 px-3 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-on-surface outline-none" />
+      <button onclick="sendChatMessage()" class="px-3 py-2 rounded-xl bg-primary text-white text-xs font-bold">
+        Send
+      </button>
+    </div>
+  </div>
+
+  <!-- Application Logic -->
+  <script src="./src/app.js"></script>
+</body>
+</html>
