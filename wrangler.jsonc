@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cheapvpn-edge",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-08-06",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "cheapvpn.hejiujiuvpn.ccwu.cc",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cheapvpn-prod",
+      "database_id": "a52510b1-3a0d-4744-b832-dd44d1f71688",
+      "migrations_dir": "cloudflare/migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "vars": {
+    "PUBLIC_BASE_URL": "https://cheapvpn.hejiujiuvpn.ccwu.cc",
+    "PAYMENT_MODE": "manual",
+    "PAYMENT_MANUAL_INSTRUCTIONS": "请完成付款后联系客户支持，并提供订单号。",
+    "ALLOW_DEMO_ACCOUNT": "false"
+  }
+}

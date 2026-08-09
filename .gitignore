@@ -1,3 +1,10 @@
 node_modules/
 dist/
 .DS_Store
+.env
+server/data/
+backups/
+.env.production
+.dev.vars
+.wrangler/
+cloudflare/local-data-import.sql

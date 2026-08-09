@@ -6,9 +6,38 @@
   "scripts": {
     "dev": "vite --host --port 3000",
     "build": "vite build",
-    "preview": "vite preview"
+    "test:mvp": "node scripts/mvp-e2e.mjs",
+    "test:payment": "node scripts/payment-webhook-e2e.mjs",
+    "test:payment:guard": "node scripts/payment-config-guard-e2e.mjs",
+    "test:payment:manual": "node scripts/payment-manual-e2e.mjs",
+    "test:production:guard": "node scripts/production-guard-e2e.mjs",
+    "test:production:start": "node scripts/production-start-e2e.mjs",
+    "test:smoke": "node scripts/proxy-smoke.mjs",
+    "test:usage": "node scripts/usage-sync-e2e.mjs",
+    "backup": "node scripts/backup-db.mjs",
+    "test:all": "npm run test:mvp && npm run test:payment && npm run test:payment:manual && npm run test:payment:guard && npm run test:usage && npm run test:production:guard && npm run test:production:start && npm run test:smoke",
+    "rotate:secrets": "node scripts/rotate-secrets.mjs",
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "start": "node server/index.js",
+    "dev:full": "concurrently \"npm run server\" \"npm run dev\"",
+    "cf:dev": "npm run build && wrangler dev",
+    "cf:db:migrate": "wrangler d1 migrations apply cheapvpn-prod --remote",
+    "cf:data:export": "node scripts/export-cloudflare-data.mjs",
+    "cf:deploy": "npm run build && wrangler deploy"
   },
   "devDependencies": {
-    "vite": "^5.4.2"
+    "concurrently": "^9.2.1",
+    "vite": "^5.4.2",
+    "wrangler": "^4.119.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.2",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "nodemailer": "^9.0.4",
+    "qrcode": "^1.5.4"
   }
 }
