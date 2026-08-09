@@ -21,6 +21,13 @@ npm run build
 
 The repository includes `package.json` and `package-lock.json`, so dependencies can be installed reproducibly. Do not commit `node_modules`; it is intentionally excluded from Git.
 
+## Download Packages
+
+- [Source package](releases/cheapvpn-student-saas-source.zip): complete source code and deployment configuration.
+- [Deployment package](releases/cheapvpn-student-saas-deploy.zip): built frontend, API, migrations, scripts, and Docker files.
+
+Both packages intentionally exclude real `.env` files, local databases, Cloudflare local state, upstream tokens, and `node_modules`.
+
 ## Local development
 
 1. Copy `.env.example` to `.env` and set `ADMIN_PASSWORD`, `ADMIN_ENCRYPTION_KEY`, `CORS_ORIGINS`, and the upstream URL or configure a source in `/#admin`.
