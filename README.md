@@ -2,6 +2,25 @@
 
 CheapVPN is a student subscription console with a Vite client and an Express + SQLite API.
 
+## Screenshots
+
+| User console | Plans | Setup guide |
+| --- | --- | --- |
+| ![Home](docs/screenshots/home-desktop.png) | ![Plans](docs/screenshots/pricing-desktop.png) | ![Setup](docs/screenshots/setup-desktop.png) |
+
+| Dashboard | Referrals | Account settings |
+| --- | --- | --- |
+| ![Dashboard](docs/screenshots/dashboard-desktop.png) | ![Referrals](docs/screenshots/referrals-desktop.png) | ![Settings](docs/screenshots/settings-desktop.png) |
+
+## Install
+
+```bash
+npm install
+npm run build
+```
+
+The repository includes `package.json` and `package-lock.json`, so dependencies can be installed reproducibly. Do not commit `node_modules`; it is intentionally excluded from Git.
+
 ## Local development
 
 1. Copy `.env.example` to `.env` and set `ADMIN_PASSWORD`, `ADMIN_ENCRYPTION_KEY`, `CORS_ORIGINS`, and the upstream URL or configure a source in `/#admin`.
