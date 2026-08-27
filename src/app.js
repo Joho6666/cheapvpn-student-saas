@@ -1,4 +1,5 @@
 import QRCode from "qrcode";
+import { createApiClient } from "./api/client.js";
 
 const state = {
   view: "overview",
@@ -47,6 +48,14 @@ const adminState = {
 };
 
 const API_BASE = `${window.location.origin}/api`;
+const apiClient = createApiClient({
+  baseUrl: API_BASE,
+  getUserToken: () => state.authToken,
+  getAdminToken: () => adminState.token,
+  getUnavailableMessage: () => t("apiUnavailable"),
+});
+const apiRequest = (path, options = {}) => apiClient.request(path, options);
+const adminApiRequest = (path, options = {}) => apiClient.adminRequest(path, options);
 let orderPollTimer = null;
 let remoteRefreshTimer = null;
 let remoteRefreshInFlight = false;
@@ -654,71 +663,6 @@ async function submitAuth(mode, email, password, name, referralCode = "") {
     state.loading = false;
     state.apiError = error.message;
     render();
-  }
-}
-
-async function apiRequest(path, options = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs || 12000);
-  try {
-    const response = await fetch(`${API_BASE}${path}`, {
-      method: options.method || "GET",
-      headers: { "Content-Type": "application/json", ...(state.authToken ? { Authorization: `Bearer ${state.authToken}` } : {}), ...(options.headers || {}) },
-      body: options.body ? JSON.stringify(options.body) : undefined,
-      signal: controller.signal,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(data.error?.message || t("apiUnavailable"));
-      error.status = response.status;
-      error.code = data.error?.code || "";
-      throw error;
-    }
-    return data;
-  } catch (error) {
-    if (error.name === "AbortError") {
-      const timeout = new Error(t("apiUnavailable"));
-      timeout.code = "REQUEST_TIMEOUT";
-      throw timeout;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function adminApiRequest(path, options = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs || 12000);
-  try {
-    const response = await fetch(`${API_BASE}${path}`, {
-      method: options.method || "GET",
-      headers: { "Content-Type": "application/json", ...(adminState.token ? { Authorization: `Bearer ${adminState.token}` } : {}) },
-      body: options.body ? JSON.stringify(options.body) : undefined,
-      signal: controller.signal,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (response.status === 404) {
-        const error = new Error("后台服务版本较旧，请重启 npm run server");
-        error.status = response.status;
-        throw error;
-      }
-      const error = new Error(data.error?.message || "后台请求失败");
-      error.status = response.status;
-      error.code = data.error?.code || "";
-      throw error;
-    }
-    return data;
-  } catch (error) {
-    if (error.name === "AbortError") {
-      const timeout = new Error("后台请求超时，请检查 API 服务");
-      timeout.code = "REQUEST_TIMEOUT";
-      throw timeout;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
