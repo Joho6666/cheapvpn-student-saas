@@ -1,6 +1,6 @@
 const ALLOWED_FIELDS = new Set([
   "requestId", "userId", "orderId", "provider", "eventId", "status", "code", "method",
-  "path", "durationMs", "count", "sourceId", "format", "success", "reason",
+  "path", "durationMs", "count", "sourceId", "format", "success", "reason", "message",
 ]);
 
 function safeFields(fields = {}) {

@@ -1047,6 +1047,7 @@ app.use((_req, res, next) => {
   next();
 });
 app.get("/health", (_req, res) => res.json({ ok: true, service: "cheapvpn-api" }));
+app.get("/health/live", (_req, res) => res.json({ ok: true, service: "cheapvpn-api" }));
 app.get("/health/ready", (_req, res) => {
   const payment = currentPaymentConfig();
   const sourceCount = db.prepare("SELECT COUNT(*) AS count FROM upstream_sources WHERE enabled = 1").get().count;
