@@ -63,6 +63,29 @@ function paymentIsReady(config = currentPaymentConfig()) {
     || (config.mode === "webhook" && Boolean(config.webhookSecret) && validCheckoutTemplate(config.checkoutTemplate));
 }
 
+function isPlaceholderSecret(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return !normalized
+    || normalized.startsWith("replace-with-")
+    || normalized.startsWith("change-me")
+    || normalized.startsWith("your-")
+    || normalized.startsWith("example-");
+}
+
+function hasProductionSecret(value, minimumLength = 32) {
+  const secret = String(value || "").trim();
+  return secret.length >= minimumLength && !isPlaceholderSecret(secret);
+}
+
+function encryptionKeyIsStrong() {
+  return hasProductionSecret(process.env.ADMIN_ENCRYPTION_KEY);
+}
+
+function paymentIsReadyForProduction(config) {
+  return paymentIsReady(config)
+    && (config.mode !== "webhook" || hasProductionSecret(config.webhookSecret));
+}
+
 function validCheckoutTemplate(value) {
   if (!String(value || "").trim()) return false;
   const probe = String(value).trim().replaceAll("{orderId}", "order-probe").replaceAll("{amount}", "19.90");
@@ -84,7 +107,10 @@ function adminPasswordMatches(password) {
 }
 
 function adminPasswordIsStrong() {
-  return Boolean(storedAdminPasswordHash()) || (adminPassword.length >= 12 && !["123", "change-me-now"].includes(adminPassword));
+  return Boolean(storedAdminPasswordHash())
+    || (adminPassword.length >= 12
+      && !["123", "change-me-now"].includes(adminPassword)
+      && !isPlaceholderSecret(adminPassword));
 }
 
 function checkoutUrlFor(order) {
@@ -1054,8 +1080,8 @@ app.get("/health/ready", (_req, res) => {
   const checks = {
     database: true,
     upstream: Boolean(sourceCount || configuredUpstreamUrl() || (allowDemoSubscription && !productionRuntime)),
-    payment: payment.mode !== "mock" && paymentIsReady(payment),
-    encryption: Boolean(process.env.ADMIN_ENCRYPTION_KEY),
+    payment: payment.mode !== "mock" && (productionRuntime ? paymentIsReadyForProduction(payment) : paymentIsReady(payment)),
+    encryption: productionRuntime ? encryptionKeyIsStrong() : Boolean(process.env.ADMIN_ENCRYPTION_KEY),
     adminPassword: adminPasswordIsStrong(),
     demoAccountDisabled: !allowDemoAccount,
   };
@@ -2496,12 +2522,12 @@ export function productionStartupErrors() {
   if (!productionRuntime) return [];
   const payment = currentPaymentConfig();
   const errors = [];
-  if (!process.env.ADMIN_ENCRYPTION_KEY) errors.push("ADMIN_ENCRYPTION_KEY is required");
+  if (!encryptionKeyIsStrong()) errors.push("ADMIN_ENCRYPTION_KEY must be a random secret of at least 32 characters");
   if (!adminPasswordIsStrong()) errors.push("a strong ADMIN_PASSWORD or an updated admin password is required");
   if (allowDemoAccount) errors.push("ALLOW_DEMO_ACCOUNT must be false");
   if (allowDemoSubscription) errors.push("ALLOW_DEMO_SUBSCRIPTION must be false");
   if (allowPrivateUpstreamUrls) errors.push("ALLOW_PRIVATE_UPSTREAM_URLS must be false");
-  if (!paymentIsReady(payment)) errors.push("a ready manual or webhook payment configuration is required");
+  if (!paymentIsReadyForProduction(payment)) errors.push("a ready manual or webhook payment configuration is required");
   return errors;
 }
 

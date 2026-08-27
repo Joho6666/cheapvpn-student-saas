@@ -28,7 +28,7 @@ const server = spawn(process.execPath, ["server/index.js"], {
   env: {
     ...process.env, NODE_ENV: "production", HOST: "127.0.0.1", PORT: String(apiPort), DATA_DIR: dataDir,
     PUBLIC_BASE_URL: `http://127.0.0.1:${apiPort}`, ADMIN_PASSWORD: "production-start-password",
-    ADMIN_ENCRYPTION_KEY: "production-start-encryption-key", PAYMENT_MODE: "manual",
+    ADMIN_ENCRYPTION_KEY: "production-start-encryption-key-with-32-plus-chars", PAYMENT_MODE: "manual",
     PAYMENT_MANUAL_INSTRUCTIONS: "请完成转账后提交订单号。", ALLOW_DEMO_SUBSCRIPTION: "false",
     ALLOW_DEMO_ACCOUNT: "false", UPSTREAM_SUBSCRIPTION_URL: providerUrl,
   },
@@ -58,6 +58,8 @@ try {
   await waitForHealth();
   const ready = await fetch(`http://127.0.0.1:${apiPort}/health/ready`);
   assert.equal(ready.status, 200, `production readiness failed: ${await ready.text()}`);
+  const live = await fetch(`http://127.0.0.1:${apiPort}/health/live`);
+  assert.equal(live.status, 200, "production liveness endpoint should return 200");
   const page = await fetch(`http://127.0.0.1:${apiPort}/`);
   assert.equal(page.status, 200, "production server should serve the built frontend");
   assert.match(await page.text(), /CheapVPN/i, "built frontend should be reachable from production entrypoint");

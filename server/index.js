@@ -10,9 +10,12 @@ const startupErrors = productionStartupErrors();
 if (startupErrors.length) {
   logEvent("app.startup_refused", {
     count: startupErrors.length,
-    reason: startupErrors.join("; "),
+    reason: "production_preflight_failed",
     message: "CheapVPN refused to start in production",
   }, "error");
+  for (const reason of startupErrors) {
+    logEvent("app.startup_check_failed", { reason }, "error");
+  }
   process.exit(1);
 }
 

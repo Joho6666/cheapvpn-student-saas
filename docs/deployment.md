@@ -1,6 +1,6 @@
 # Recommended deployment
 
-Use `compose.yml` with Docker and Caddy. Copy `.env.production.example` to `.env.production`, set `DOMAIN`, `PUBLIC_BASE_URL`, `CORS_ORIGINS`, a strong `ADMIN_PASSWORD`, a random `ADMIN_ENCRYPTION_KEY`, manual or webhook payment settings, and at least one real upstream source.
+Use `compose.yml` with Docker and Caddy. Copy `.env.production.example` to `.env.production`, set `DOMAIN`, `PUBLIC_BASE_URL`, `CORS_ORIGINS`, a strong non-placeholder `ADMIN_PASSWORD`, a random non-placeholder `ADMIN_ENCRYPTION_KEY` of at least 32 characters, manual or webhook payment settings, and at least one real upstream source. Webhook mode also requires a non-placeholder signing secret of at least 32 characters.
 
 ```bash
 npm ci
