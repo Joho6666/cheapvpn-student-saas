@@ -1,8 +1,6 @@
-import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
-import Database from "better-sqlite3";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,43 +8,34 @@ import net from "node:net";
 import dns from "node:dns/promises";
 import nodemailer from "nodemailer";
 import { fileURLToPath } from "node:url";
+import { createDatabase } from "./db/database.js";
+import {
+  adminPassword, allowDemoAccount, allowDemoSubscription, allowPrivateUpstreamUrls,
+  config, configuredCorsOrigins, dataDir, emailFromDefault, host, nodeGeoTimeout,
+  nodeProbeTimeout, nodeTestConcurrency, paymentCheckoutTemplateDefault,
+  paymentManualInstructionsDefault, paymentMethodCatalog, paymentModeDefault,
+  paymentWebhookSecretDefault, port, productionRuntime, publicBaseUrl,
+  smtpUrlDefault, trustProxyHeaders, upstreamAssignmentDefault, upstreamSyncConcurrency,
+  upstreamTimeout, upstreamUsageApiTokenDefault, upstreamUsageApiUrlDefault,
+  upstreamUsageSyncIntervalDefault,
+} from "./config/env.js";
+import { GenericSubscriptionProvider } from "./providers/generic-subscription.provider.js";
+import { validateRemoteUrl } from "./security/remote-fetch.js";
+import { logEvent } from "./observability/logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.resolve(process.env.DATA_DIR || path.join(__dirname, "data"));
-fs.mkdirSync(dataDir, { recursive: true });
-
-const port = Number(process.env.PORT || 4000);
-const host = process.env.HOST || "127.0.0.1";
-const publicBaseUrl = (process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${port}`).replace(/\/$/, "");
-const trustProxyHeaders = String(process.env.TRUST_PROXY || "false").toLowerCase() === "true";
-const configuredCorsOrigins = String(process.env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim().replace(/\/$/, "")).filter(Boolean);
-const upstreamTimeout = Number(process.env.UPSTREAM_SYNC_TIMEOUT_MS || 10000);
-const nodeTestConcurrency = Number(process.env.NODE_TEST_CONCURRENCY || 24);
-const upstreamSyncConcurrency = Math.max(1, Number(process.env.UPSTREAM_SYNC_CONCURRENCY || 6));
-const nodeProbeTimeout = Math.max(500, Number(process.env.NODE_PROBE_TIMEOUT_MS || 2000));
-const nodeGeoTimeout = Math.max(500, Number(process.env.NODE_GEO_TIMEOUT_MS || 1800));
-const adminPassword = process.env.ADMIN_PASSWORD || "change-me-now";
-const productionRuntime = String(process.env.NODE_ENV || "").toLowerCase() === "production";
-const paymentWebhookSecretDefault = process.env.PAYMENT_WEBHOOK_SECRET || "";
-const paymentModeDefault = ["mock", "manual", "webhook"].includes(String(process.env.PAYMENT_MODE || "mock")) ? String(process.env.PAYMENT_MODE || "mock") : "mock";
-const paymentMethodCatalog = [
-  { id: "wechat_pay", label: "WeChat Pay", icon: "chat", description: "微信支付" },
-  { id: "alipay", label: "Alipay", icon: "account_balance_wallet", description: "支付宝" },
-  { id: "card", label: "Visa / Mastercard", icon: "credit_card", description: "信用卡或借记卡" },
-  { id: "bank_transfer", label: "Bank transfer", icon: "account_balance", description: "银行转账" },
-];
-const allowDemoSubscription = String(process.env.ALLOW_DEMO_SUBSCRIPTION || "false").toLowerCase() === "true";
-const allowDemoAccount = String(process.env.ALLOW_DEMO_ACCOUNT || "false").toLowerCase() === "true";
-const paymentCheckoutTemplateDefault = String(process.env.PAYMENT_CHECKOUT_URL_TEMPLATE || "").trim();
-const paymentManualInstructionsDefault = String(process.env.PAYMENT_MANUAL_INSTRUCTIONS || "").trim().slice(0, 2000);
-const upstreamUsageApiUrlDefault = String(process.env.UPSTREAM_USAGE_API_URL || "").trim();
-const upstreamUsageApiTokenDefault = String(process.env.UPSTREAM_USAGE_API_TOKEN || "").trim();
-const upstreamUsageSyncIntervalDefault = Math.max(0, Number(process.env.UPSTREAM_USAGE_SYNC_INTERVAL_MS || 0));
-const upstreamAssignmentDefault = ["default", "round_robin"].includes(String(process.env.UPSTREAM_ASSIGNMENT_MODE || "default"))
-  ? String(process.env.UPSTREAM_ASSIGNMENT_MODE || "default") : "default";
-const smtpUrlDefault = String(process.env.SMTP_URL || "").trim();
-const emailFromDefault = String(process.env.EMAIL_FROM || "").trim().slice(0, 180);
-const db = new Database(path.join(dataDir, "cheapvpn.sqlite"));
+let database = createDatabase({ dataDir });
+const db = new Proxy({}, {
+  get(_target, property) {
+    const value = database[property];
+    return typeof value === "function" ? value.bind(database) : value;
+  },
+});
+let subscriptionProvider = new GenericSubscriptionProvider({
+  timeoutMs: upstreamTimeout,
+  allowPrivate: allowPrivateUpstreamUrls && !productionRuntime,
+});
+let injectedMailer = null;
 const sessions = new Map();
 const adminSessions = new Map();
 const geoMemoryCache = new Map();
@@ -55,178 +44,6 @@ const syncLocks = new Set();
 // Reuse an in-flight sync when several client endpoints refresh together.
 const subscriptionSyncPromises = new Map();
 const subscriptionSyncCooldownMs = 1500;
-
-db.pragma("journal_mode = WAL");
-db.pragma("synchronous = NORMAL");
-db.pragma("busy_timeout = 5000");
-db.pragma("foreign_keys = ON");
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
-    password_hash TEXT NOT NULL, referral_code TEXT NOT NULL UNIQUE, referred_by_user_id INTEGER,
-    created_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS plans (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
-    first_month_price REAL NOT NULL, renewal_price REAL NOT NULL, data_total_gb REAL NOT NULL,
-    device_limit INTEGER NOT NULL, billing_period_months INTEGER NOT NULL DEFAULT 1, active INTEGER NOT NULL DEFAULT 1
-  );
-  CREATE TABLE IF NOT EXISTS orders (
-    id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, plan_id INTEGER NOT NULL, amount REAL NOT NULL,
-    status TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'new', discount_percent INTEGER NOT NULL DEFAULT 0,
-    referral_id INTEGER, expires_at TEXT, created_at TEXT NOT NULL, confirmed_at TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(plan_id) REFERENCES plans(id)
-  );
-  CREATE TABLE IF NOT EXISTS payment_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider TEXT NOT NULL,
-    provider_event_id TEXT NOT NULL UNIQUE,
-    order_id TEXT NOT NULL,
-    status TEXT NOT NULL,
-    amount REAL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(order_id) REFERENCES orders(id)
-  );
-  CREATE TABLE IF NOT EXISTS payment_submissions (
-    order_id TEXT PRIMARY KEY,
-    payment_method TEXT NOT NULL DEFAULT 'manual',
-    payment_reference TEXT NOT NULL,
-    customer_note TEXT,
-    submitted_at TEXT NOT NULL,
-    FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS subscriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL UNIQUE, plan_id INTEGER NOT NULL,
-    source_id INTEGER,
-    token TEXT NOT NULL UNIQUE, status TEXT NOT NULL, data_used_gb REAL NOT NULL DEFAULT 0,
-    usage_source TEXT NOT NULL DEFAULT 'manual', upstream_used_gb REAL, upstream_total_gb REAL,
-    upstream_expires_at TEXT, upstream_synced_at TEXT,
-    expires_at TEXT NOT NULL, last_sync_at TEXT, last_sync_status TEXT, last_sync_error TEXT,
-    universal_content TEXT NOT NULL, clash_content TEXT NOT NULL, singbox_content TEXT NOT NULL,
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(plan_id) REFERENCES plans(id)
-  );
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS user_sessions (
-    token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS usage_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    subscription_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    used_gb REAL NOT NULL,
-    total_gb REAL NOT NULL,
-    source TEXT NOT NULL,
-    captured_at TEXT NOT NULL,
-    FOREIGN KEY(subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS admin_sessions (
-    token_hash TEXT PRIMARY KEY, expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL, used_at TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS support_tickets (
-    id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, subject TEXT NOT NULL,
-    device TEXT, client TEXT, description TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, resolved_at TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS referrals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    referrer_user_id INTEGER NOT NULL,
-    referred_user_id INTEGER NOT NULL UNIQUE,
-    code TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'registered',
-    reward_percent INTEGER NOT NULL DEFAULT 10,
-    created_at TEXT NOT NULL,
-    qualified_at TEXT,
-    reward_used_at TEXT,
-    FOREIGN KEY(referrer_user_id) REFERENCES users(id),
-    FOREIGN KEY(referred_user_id) REFERENCES users(id)
-  );
-  CREATE TABLE IF NOT EXISTS upstream_sources (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    url_encrypted TEXT NOT NULL,
-    universal_url_encrypted TEXT,
-    clash_url_encrypted TEXT,
-    singbox_url_encrypted TEXT,
-    enabled INTEGER NOT NULL DEFAULT 1,
-    is_default INTEGER NOT NULL DEFAULT 0,
-    last_sync_at TEXT,
-    last_sync_status TEXT,
-    last_sync_error TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-`);
-
-try { db.exec("ALTER TABLE payment_submissions ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'manual'"); } catch (error) {
-  if (!String(error.message).includes("duplicate column name")) throw error;
-}
-
-try { db.exec("ALTER TABLE subscriptions ADD COLUMN source_id INTEGER"); } catch (error) {
-  if (!String(error.message).includes("duplicate column name")) throw error;
-}
-try { db.exec("ALTER TABLE plans ADD COLUMN billing_period_months INTEGER NOT NULL DEFAULT 1"); } catch (error) {
-  if (!String(error.message).includes("duplicate column name")) throw error;
-}
-try { db.exec("ALTER TABLE users ADD COLUMN referred_by_user_id INTEGER"); } catch (error) {
-  if (!String(error.message).includes("duplicate column name")) throw error;
-}
-for (const [column, definition] of [["kind", "TEXT NOT NULL DEFAULT 'new'"], ["discount_percent", "INTEGER NOT NULL DEFAULT 0"], ["referral_id", "INTEGER"]]) {
-  try { db.exec(`ALTER TABLE orders ADD COLUMN ${column} ${definition}`); } catch (error) {
-    if (!String(error.message).includes("duplicate column name")) throw error;
-  }
-}
-try { db.exec("ALTER TABLE orders ADD COLUMN expires_at TEXT"); } catch (error) {
-  if (!String(error.message).includes("duplicate column name")) throw error;
-}
-try { db.exec("ALTER TABLE orders ADD COLUMN client_request_id TEXT"); } catch (error) {
-  if (!String(error.message).includes("duplicate column name")) throw error;
-}
-try { db.exec("ALTER TABLE referrals ADD COLUMN reward_used_at TEXT"); } catch (error) {
-  if (!String(error.message).includes("duplicate column name")) throw error;
-}
-db.exec("CREATE INDEX IF NOT EXISTS idx_orders_user_status ON orders(user_id, status, created_at)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_orders_pending_expiry ON orders(status, expires_at)");
-db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_user_request ON orders(user_id, client_request_id) WHERE client_request_id IS NOT NULL");
-db.exec("CREATE INDEX IF NOT EXISTS idx_payment_events_order ON payment_events(order_id, created_at)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_user_id, status)");
-for (const column of ["universal_url_encrypted", "clash_url_encrypted", "singbox_url_encrypted"]) {
-  try { db.exec(`ALTER TABLE upstream_sources ADD COLUMN ${column} TEXT`); } catch (error) {
-    if (!String(error.message).includes("duplicate column name")) throw error;
-  }
-}
-try { db.exec("ALTER TABLE upstream_sources ADD COLUMN node_rules_json TEXT"); } catch (error) {
-  if (!String(error.message).includes("duplicate column name")) throw error;
-}
-db.exec("CREATE INDEX IF NOT EXISTS idx_subscriptions_expiry ON subscriptions(status, expires_at)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_subscriptions_source_status ON subscriptions(source_id, status, updated_at)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_usage_snapshots_user_time ON usage_snapshots(user_id, captured_at DESC)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_usage_snapshots_subscription_time ON usage_snapshots(subscription_id, captured_at DESC)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry ON user_sessions(expires_at)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_admin_sessions_expiry ON admin_sessions(expires_at)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets(user_id, created_at)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status, updated_at)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_password_reset_user_expiry ON password_reset_tokens(user_id, expires_at)");
-for (const [column, definition] of [["usage_source", "TEXT NOT NULL DEFAULT 'manual'"], ["upstream_used_gb", "REAL"], ["upstream_total_gb", "REAL"], ["upstream_expires_at", "TEXT"], ["upstream_synced_at", "TEXT"]]) {
-  try { db.exec(`ALTER TABLE subscriptions ADD COLUMN ${column} ${definition}`); } catch (error) {
-    if (!String(error.message).includes("duplicate column name")) throw error;
-  }
-}
 
 const now = () => new Date().toISOString();
 const randomId = () => crypto.randomUUID();
@@ -237,6 +54,8 @@ const sessionLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const processingRecoveryMs = 10 * 60 * 1000;
 const sessionHash = (token) => crypto.createHash("sha256").update(token).digest("hex");
 const passwordResetLifetimeMs = 30 * 60 * 1000;
+const toCents = (value) => Math.round(Number(value || 0) * 100);
+const fromCents = (value) => Number(value || 0) / 100;
 
 function paymentIsReady(config = currentPaymentConfig()) {
   return (config.mode === "mock" && !productionRuntime)
@@ -589,7 +408,7 @@ async function sendPasswordResetEmail(user, rawToken) {
   const email = currentEmailConfig();
   if (!validSmtpUrl(email.smtpUrl) || !email.from) return false;
   const resetUrl = `${publicBaseUrl}/?reset=${encodeURIComponent(rawToken)}`;
-  const transport = nodemailer.createTransport(email.smtpUrl);
+  const transport = injectedMailer || nodemailer.createTransport(email.smtpUrl);
   await transport.sendMail({
     from: email.from,
     to: user.email,
@@ -1043,12 +862,11 @@ async function fetchUpstream(sourceId, format = "universal") {
     if (allowDemoSubscription && !productionRuntime) return { content: demoContent(), source: "demo", sourceId: null };
     throw apiError("UPSTREAM_NOT_CONFIGURED", "Configure a real upstream source before serving subscriptions", 503);
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), upstreamTimeout);
   try {
-    const response = await fetch(upstreamUrl, { signal: controller.signal });
+    const result = await subscriptionProvider.getSubscription(upstreamUrl, { format });
+    const response = result.response;
     if (!response.ok) throw apiError("UPSTREAM_FETCH_FAILED", `Upstream responded with ${response.status}`, 502);
-    const raw = await response.text();
+    const raw = result.content;
     const trimmed = raw.trim();
     if (!trimmed || /^<!doctype html|^<html[\s>]/i.test(trimmed)) {
       throw apiError("UPSTREAM_INVALID_CONTENT", `${format} subscription returned empty or HTML content`, 502);
@@ -1062,8 +880,17 @@ async function fetchUpstream(sourceId, format = "universal") {
       throw apiError("UPSTREAM_INVALID_CONTENT", `${format} subscription contains no ${labels[format] || "usable configuration"}`, 502);
     }
     return { content: applyNodeRules(content, selectedSource, format), source: "upstream", sourceId: selectedSource?.id || null, usage: format === "universal" ? parseUpstreamUsage(response.headers) : null };
-  } finally {
-    clearTimeout(timer);
+  } catch (error) {
+    logEvent("upstream.fetch", { sourceId: selectedSource?.id || null, format, code: error.code || "UPSTREAM_FETCH_FAILED", success: false }, "warn");
+    throw error;
+  }
+}
+
+function validateUpstreamUrl(value) {
+  try {
+    validateRemoteUrl(value, { allowPrivate: allowPrivateUpstreamUrls && !productionRuntime });
+  } catch (error) {
+    throw apiError(error.code || "INVALID_UPSTREAM_URL", error.message, error.status || 400);
   }
 }
 
@@ -1209,6 +1036,16 @@ app.use(cors({ origin: (origin, callback) => {
 // webhook bodies remain small. Keep a bounded request size without rejecting
 // normal batch usage updates.
 app.use(express.json({ limit: "256kb", verify: (req, _res, buffer) => { req.rawBody = buffer; } }));
+app.use((_req, res, next) => {
+  res.set({
+    "Content-Security-Policy": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://cdn.tailwindcss.com 'unsafe-inline'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+  });
+  if (productionRuntime) res.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+});
 app.get("/health", (_req, res) => res.json({ ok: true, service: "cheapvpn-api" }));
 app.get("/health/ready", (_req, res) => {
   const payment = currentPaymentConfig();
@@ -1261,7 +1098,11 @@ setInterval(cleanRateLimitBuckets, 5 * 60 * 1000).unref();
 
 app.post("/api/admin/auth/login", rateLimit({ name: "admin-login", max: 10, windowMs: 15 * 60 * 1000 }), (req, res, next) => {
   try {
-    if (!adminPasswordMatches(String(req.body?.password || ""))) throw apiError("INVALID_ADMIN_CREDENTIALS", "Admin password is incorrect", 401);
+    if (!adminPasswordMatches(String(req.body?.password || ""))) {
+      logEvent("admin.login_failed", { success: false, reason: "invalid_credentials" }, "warn");
+      throw apiError("INVALID_ADMIN_CREDENTIALS", "Admin password is incorrect", 401);
+    }
+    logEvent("admin.login", { success: true });
     res.json({ token: createAdminSession() });
   } catch (error) { next(error); }
 });
@@ -1343,7 +1184,10 @@ app.put("/api/admin/settings/usage", adminAuth, (req, res, next) => {
     const url = hasUrl ? String(req.body.url || "").trim() : current.url;
     const token = hasToken ? String(req.body.token || "").trim() : current.token;
     const interval = req.body?.syncIntervalMs === undefined || req.body?.syncIntervalMs === "" ? null : Number(req.body.syncIntervalMs);
-    if (url && !/^https?:\/\//i.test(url)) throw apiError("INVALID_USAGE_API_URL", "Usage API URL must start with http:// or https://");
+    if (url) {
+      try { validateRemoteUrl(url, { allowPrivate: allowPrivateUpstreamUrls && !productionRuntime }); }
+      catch (error) { throw apiError("INVALID_USAGE_API_URL", error.message, error.status || 400); }
+    }
     if (interval !== null && (!Number.isInteger(interval) || (interval !== 0 && interval < 30 * 1000))) throw apiError("INVALID_USAGE_INTERVAL", "Sync interval must be 0 or at least 30 seconds");
     const timestamp = now();
     const save = db.transaction(() => {
@@ -1407,6 +1251,37 @@ app.put("/api/admin/settings/email", adminAuth, (req, res, next) => {
 app.get("/api/admin/settings/payment", adminAuth, (_req, res) => {
   const payment = currentPaymentConfig();
   res.json({ mode: payment.mode, checkoutTemplate: payment.checkoutTemplate, manualInstructions: payment.manualInstructions, methods: payment.methods, checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret), manualInstructionsConfigured: Boolean(payment.manualInstructions) });
+});
+
+app.get("/api/admin/metrics", adminAuth, (_req, res) => {
+  expireSubscriptions();
+  expirePendingOrders();
+  const today = new Date().toISOString().slice(0, 10);
+  const month = today.slice(0, 7);
+  const paidRevenue = (period) => db.prepare(`SELECT COALESCE(SUM(amount), 0) AS revenue, COUNT(*) AS orders
+    FROM orders WHERE status = 'paid' AND substr(COALESCE(confirmed_at, created_at), 1, ${period === "month" ? 7 : 10}) = ?`).get(period === "month" ? month : today);
+  const todayTotals = paidRevenue("day");
+  const monthTotals = paidRevenue("month");
+  const paymentEvents = db.prepare(`SELECT
+    SUM(CASE WHEN status IN ('paid', 'succeeded') THEN 1 ELSE 0 END) AS successful,
+    COUNT(*) AS total FROM payment_events WHERE created_at >= ?`).get(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+  const expiringAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const expiringSubscriptions = db.prepare(`SELECT COUNT(*) AS count FROM subscriptions
+    WHERE status = 'active' AND expires_at > ? AND expires_at <= ?`).get(new Date().toISOString(), expiringAt).count;
+  const syncFailures = db.prepare(`SELECT COUNT(*) AS count FROM upstream_sources
+    WHERE last_sync_status IN ('error', 'failed')`).get().count;
+  const openTickets = db.prepare("SELECT COUNT(*) AS count FROM support_tickets WHERE status = 'open'").get().count;
+  res.json({
+    utcDate: today,
+    today: { newUsers: db.prepare("SELECT COUNT(*) AS count FROM users WHERE substr(created_at, 1, 10) = ?").get(today).count, orders: todayTotals.orders, revenue: todayTotals.revenue, revenueCents: Math.round(Number(todayTotals.revenue) * 100) },
+    month: { revenue: monthTotals.revenue, revenueCents: Math.round(Number(monthTotals.revenue) * 100) },
+    activeSubscriptions: db.prepare("SELECT COUNT(*) AS count FROM subscriptions WHERE status = 'active'").get().count,
+    expiringSubscriptions7d: expiringSubscriptions,
+    paymentSuccessRate30d: paymentEvents.total ? Number((paymentEvents.successful / paymentEvents.total).toFixed(4)) : null,
+    paymentEvents30d: { successful: paymentEvents.successful || 0, total: paymentEvents.total || 0 },
+    upstreamSyncFailures: syncFailures,
+    openTickets,
+  });
 });
 
 app.put("/api/admin/settings/payment", adminAuth, (req, res, next) => {
@@ -1647,19 +1522,18 @@ function applyUsageRecords(records, source = "provider-import") {
 async function fetchProviderUsageRecords() {
   const usageConfig = currentUsageApiConfig();
   if (!usageConfig.url) throw apiError("USAGE_API_NOT_CONFIGURED", "Usage API is not configured", 503);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), upstreamTimeout);
   try {
-    const response = await fetch(usageConfig.url, {
-      signal: controller.signal,
-      headers: { Accept: "application/json", ...(usageConfig.token ? { Authorization: `Bearer ${usageConfig.token}` } : {}) },
-    });
+    const result = await subscriptionProvider.getUsage(usageConfig.url, { token: usageConfig.token });
+    const response = result.response;
     if (!response.ok) throw apiError("USAGE_API_FAILED", `Usage API responded with ${response.status}`, 502);
-    const payload = await response.json();
+    const payload = result.payload;
     const records = Array.isArray(payload) ? payload : payload?.records;
     if (!Array.isArray(records) || !records.length) throw apiError("EMPTY_USAGE_API_RESPONSE", "Usage API returned no records", 502);
     return records.slice(0, 500);
-  } finally { clearTimeout(timer); }
+  } catch (error) {
+    logEvent("upstream.usage_fetch", { code: error.code || "USAGE_API_FAILED", success: false }, "warn");
+    throw error;
+  }
 }
 
 app.post("/api/admin/usage/sync", adminAuth, async (_req, res, next) => {
@@ -1819,9 +1693,9 @@ app.post("/api/admin/sources", adminAuth, (req, res, next) => {
     const singboxUrl = String(req.body?.singboxUrl || "").trim();
     if (!name) throw apiError("INVALID_SOURCE_NAME", "Source name is required");
     if (!url) throw apiError("INVALID_UPSTREAM_URL", "Upstream URL is required");
-    if (url && !/^https?:\/\//i.test(url)) throw apiError("INVALID_UPSTREAM_URL", "Upstream URL must start with http:// or https://");
-    if (clashUrl && !/^https?:\/\//i.test(clashUrl)) throw apiError("INVALID_UPSTREAM_URL", "Clash URL must start with http:// or https://");
-    if (singboxUrl && !/^https?:\/\//i.test(singboxUrl)) throw apiError("INVALID_UPSTREAM_URL", "SingBox URL must start with http:// or https://");
+    validateUpstreamUrl(url);
+    if (clashUrl) validateUpstreamUrl(clashUrl);
+    if (singboxUrl) validateUpstreamUrl(singboxUrl);
     const hasDefault = db.prepare("SELECT id FROM upstream_sources WHERE is_default = 1 AND enabled = 1 LIMIT 1").get();
     const timestamp = now();
     const result = db.prepare(`INSERT INTO upstream_sources
@@ -1846,9 +1720,9 @@ app.put("/api/admin/sources/:id", adminAuth, (req, res, next) => {
     const hasDefaultFlag = Object.prototype.hasOwnProperty.call(req.body || {}, "isDefault");
     const makeDefault = hasDefaultFlag ? Boolean(req.body.isDefault) : Boolean(source.is_default && enabled);
     if (!name) throw apiError("INVALID_SOURCE_NAME", "Source name is required");
-    if (url && !/^https?:\/\//i.test(url)) throw apiError("INVALID_UPSTREAM_URL", "Upstream URL must start with http:// or https://");
-    if (clashUrl && !/^https?:\/\//i.test(clashUrl)) throw apiError("INVALID_UPSTREAM_URL", "Clash URL must start with http:// or https://");
-    if (singboxUrl && !/^https?:\/\//i.test(singboxUrl)) throw apiError("INVALID_UPSTREAM_URL", "SingBox URL must start with http:// or https://");
+    if (url) validateUpstreamUrl(url);
+    if (clashUrl) validateUpstreamUrl(clashUrl);
+    if (singboxUrl) validateUpstreamUrl(singboxUrl);
     if (makeDefault && !enabled) throw apiError("DEFAULT_SOURCE_DISABLED", "The default source must be enabled", 409);
     const timestamp = now();
     if (makeDefault) db.prepare("UPDATE upstream_sources SET is_default = 0 WHERE id != ?").run(source.id);
@@ -2006,7 +1880,7 @@ app.put("/api/admin/upstream", adminAuth, (req, res, next) => {
   try {
     const url = String(req.body?.url || "").trim();
     if (url) {
-      if (!/^https?:\/\//i.test(url)) throw apiError("INVALID_UPSTREAM_URL", "Upstream URL must start with http:// or https://");
+      validateUpstreamUrl(url);
       const existing = db.prepare("SELECT * FROM upstream_sources WHERE is_default = 1 ORDER BY id LIMIT 1").get()
         || db.prepare("SELECT * FROM upstream_sources ORDER BY id LIMIT 1").get();
       const timestamp = now();
@@ -2304,13 +2178,19 @@ app.post("/api/orders", auth, (req, res, next) => {
       ORDER BY qualified_at ASC LIMIT 1`).get(req.user.id) : null;
     const discountPercent = eligibleReferral?.reward_percent || 0;
     const subtotal = renewal ? plan.renewal_price : plan.first_month_price;
-    const amount = Math.round(subtotal * (1 - discountPercent / 100) * 100) / 100;
+    const amount = fromCents(toCents(subtotal) * (100 - discountPercent) / 100);
     const createdAt = now();
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     const order = { id: randomId(), amount, subtotal, status: "pending", kind: renewal ? "renewal" : "new", discountPercent, referralId: eligibleReferral?.id || null, expiresAt, createdAt, clientRequestId: clientRequestId || null };
-    db.prepare(`INSERT INTO orders (id, user_id, plan_id, amount, status, kind, discount_percent, referral_id, expires_at, created_at, client_request_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(order.id, req.user.id, plan.id, order.amount, order.status, order.kind, order.discountPercent, order.referralId, order.expiresAt, order.createdAt, order.clientRequestId);
+    try {
+      db.prepare(`INSERT INTO orders (id, user_id, plan_id, amount, status, kind, discount_percent, referral_id, expires_at, created_at, client_request_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(order.id, req.user.id, plan.id, order.amount, order.status, order.kind, order.discountPercent, order.referralId, order.expiresAt, order.createdAt, order.clientRequestId);
+    } catch (error) {
+      if (String(error.message).includes("idx_orders_one_open_per_user")) throw apiError("OPEN_ORDER_EXISTS", "There is already an open order for this customer", 409);
+      throw error;
+    }
+    logEvent("order.created", { userId: req.user.id, orderId: order.id, status: order.status, success: true });
     res.status(201).json({ order: customerOrderView(order), plan: planView(plan), pricing: { subtotal, discountPercent, amount } });
   } catch (error) { next(error); }
 });
@@ -2430,14 +2310,15 @@ app.post("/api/webhooks/payment", rateLimit({ name: "payment-webhook", max: 120,
     const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
     if (!order) throw apiError("ORDER_NOT_FOUND", "Order was not found", 404);
     if (order.status === "expired") throw apiError("PAYMENT_ORDER_EXPIRED", "This order has expired", 410);
-    if (Number.isFinite(amount) && Math.round(amount * 100) !== Math.round(order.amount * 100)) throw apiError("PAYMENT_AMOUNT_MISMATCH", "Payment amount does not match order", 409);
+    if (Number.isFinite(amount) && toCents(amount) !== toCents(order.amount)) throw apiError("PAYMENT_AMOUNT_MISMATCH", "Payment amount does not match order", 409);
     if (failed) {
       if (order.status === "paid") throw apiError("ORDER_ALREADY_PAID", "A paid order cannot be marked as failed", 409);
       if (order.status !== "pending") throw apiError("ORDER_NOT_CONFIRMABLE", "Only pending orders can receive a payment failure", 409);
       const failedStatus = status === "canceled" ? "cancelled" : "failed";
       db.prepare("UPDATE orders SET status = ? WHERE id = ? AND status = 'pending'").run(failedStatus, order.id);
        db.prepare(`INSERT OR IGNORE INTO payment_events (provider, provider_event_id, order_id, status, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`).run(provider, eventId, order.id, failedStatus, Number.isFinite(amount) ? amount : order.amount, now());
+          VALUES (?, ?, ?, ?, ?, ?)`).run(provider, eventId, order.id, failedStatus, Number.isFinite(amount) ? amount : order.amount, now());
+      logEvent("payment.failed", { orderId: order.id, provider, eventId, status: failedStatus, success: false }, "warn");
       return res.json({ ok: true, failed: true, orderId: order.id, status: failedStatus });
     }
     if (order.status === "paid") {
@@ -2451,6 +2332,7 @@ app.post("/api/webhooks/payment", rateLimit({ name: "payment-webhook", max: 120,
     const result = await completeOrder(order);
     db.prepare(`INSERT OR IGNORE INTO payment_events (provider, provider_event_id, order_id, status, amount, created_at)
       VALUES (?, ?, ?, 'paid', ?, ?)`).run(provider, eventId, order.id, Number.isFinite(amount) ? amount : order.amount, now());
+    logEvent("payment.succeeded", { orderId: order.id, provider, eventId, status: "paid", success: true });
     res.json({ ok: true, orderId: order.id, subscription: result.subscription });
   } catch (error) {
     if (claimedOrderId) db.prepare("UPDATE orders SET status = 'pending' WHERE id = ? AND status = 'processing'").run(claimedOrderId);
@@ -2610,11 +2492,15 @@ export function productionStartupErrors() {
   if (!adminPasswordIsStrong()) errors.push("a strong ADMIN_PASSWORD or an updated admin password is required");
   if (allowDemoAccount) errors.push("ALLOW_DEMO_ACCOUNT must be false");
   if (allowDemoSubscription) errors.push("ALLOW_DEMO_SUBSCRIPTION must be false");
+  if (allowPrivateUpstreamUrls) errors.push("ALLOW_PRIVATE_UPSTREAM_URLS must be false");
   if (!paymentIsReady(payment)) errors.push("a ready manual or webhook payment configuration is required");
   return errors;
 }
 
-export function createApp() {
+export function createApp({ database: injectedDatabase, provider, mailer } = {}) {
+  if (injectedDatabase) database = injectedDatabase;
+  if (provider) subscriptionProvider = provider;
+  if (mailer) injectedMailer = mailer;
   return app;
 }
 

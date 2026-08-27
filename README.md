@@ -2,6 +2,10 @@
 
 CheapVPN is a student subscription console with a Vite client and an Express + SQLite API.
 
+## Recommended production path
+
+Use Node.js + Docker + Caddy as the supported V1.0 deployment: Caddy terminates HTTPS, Express serves the built frontend/API, SQLite persists the service state, and the Provider layer reads from the configured supplier. The Cloudflare Worker is an experimental alternative for compatibility testing; it is not the target for new V1.0 business features.
+
 ## Screenshots
 
 | User console | Plans | Setup guide |
@@ -37,7 +41,9 @@ Both packages intentionally exclude real `.env` files, local databases, Cloudfla
 4. Open `http://127.0.0.1:3000` for the user console and `http://127.0.0.1:3000/#admin` for operations.
 
 Run `npm run test:mvp` for the isolated customer/admin flow, or `npm run test:payment` for the signed payment webhook flow. Both tests use temporary SQLite data and do not modify the local database.
-Run `npm run test:all` to execute the complete customer, payment, usage, production-guard, and frontend-proxy regression suite.
+Run `npm run test:all` to execute the complete customer, payment, usage, security, order-concurrency, production-guard, and frontend-proxy regression suite.
+
+The local test suite explicitly enables `ALLOW_PRIVATE_UPSTREAM_URLS=true` only for loopback fixtures. Production must leave it `false`; startup refuses to run when a production process tries to enable it. `GET /api/admin/metrics` is available to authenticated administrators and reports truthful UTC daily/monthly revenue, active subscriptions, expiring subscriptions, payment success rate, upstream sync failures, and open tickets.
 
 With the API and Vite frontend running, `npm run test:smoke` verifies the real frontend proxy at `APP_BASE_URL` (default `http://127.0.0.1:3000`) without creating or modifying a customer.
 
@@ -76,6 +82,8 @@ The admin customer endpoint supports `GET /api/admin/users?q=name-or-email&page=
 ## Production-style start
 
 Run `npm run build`, then `npm start`. The API server serves the built frontend and API from the same port. Set `PUBLIC_BASE_URL` to that public HTTPS origin before issuing subscriptions.
+
+See [docs/architecture.md](docs/architecture.md), [docs/provider-api.md](docs/provider-api.md), [docs/security.md](docs/security.md), [docs/deployment.md](docs/deployment.md), and [docs/backend-parity.md](docs/backend-parity.md) for the V1.0 boundaries and launch checklist. Historical design exports are under `docs/design-history/`; the two root release archives remain for compatibility and should move to GitHub Releases in a later cleanup.
 
 ## Public deployment with Docker
 

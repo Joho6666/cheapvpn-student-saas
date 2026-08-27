@@ -31,6 +31,7 @@ const adminState = {
   loading: true,
   error: "",
   metrics: null,
+  operations: null,
   users: [],
   userQuery: "",
   userPage: 1,
@@ -463,6 +464,7 @@ function renderAdminApp() {
   `;
   injectAdminTokenResetButtons();
   bindAdminEvents();
+  injectAdminOperations();
 }
 
 function renderAdminLogin() {
@@ -485,6 +487,21 @@ function injectAdminTokenResetButtons() {
     resetButton.textContent = "重置 Token";
     expireButton.parentElement?.insertBefore(resetButton, expireButton);
   });
+}
+
+function renderAdminOperations() {
+  const operations = adminState.operations || {};
+  const today = operations.today || {};
+  const month = operations.month || {};
+  const rate = operations.paymentSuccessRate30d === null || operations.paymentSuccessRate30d === undefined
+    ? "暂无数据" : `${(Number(operations.paymentSuccessRate30d) * 100).toFixed(1)}%`;
+  return `<div class="admin-card admin-readiness-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">REAL OPERATIONS</span><h3>真实运营指标</h3></div><span class="admin-form-hint">UTC ${escapeHtml(operations.utcDate || "-")}</span></div><div class="admin-metric-grid admin-ops-metrics">${adminMetric("今日新增用户", today.newUsers || 0, "person_add", "blue")}${adminMetric("今日支付订单", today.orders || 0, "receipt", "green")}${adminMetric("今日收入", `¥${Number(today.revenue || 0).toFixed(2)}`, "payments", "orange")}${adminMetric("本月收入", `¥${Number(month.revenue || 0).toFixed(2)}`, "calendar_month", "ink")}${adminMetric("7天内到期", operations.expiringSubscriptions7d || 0, "event_busy", "orange")}${adminMetric("支付成功率", rate, "verified", "green")}${adminMetric("上游同步失败", operations.upstreamSyncFailures || 0, "cloud_off", "orange")}${adminMetric("未处理工单", operations.openTickets || 0, "support_agent", "blue")}</div></div>`;
+}
+
+function injectAdminOperations() {
+  if (adminState.view !== "overview") return;
+  const target = document.querySelector(".admin-readiness-card");
+  if (target) target.insertAdjacentHTML("beforebegin", renderAdminOperations());
 }
 
 function renderAdminOverview() {
@@ -733,8 +750,9 @@ async function loadAdminState() {
   try {
     const userQuery = new URLSearchParams({ q: adminState.userQuery, page: String(adminState.userPage), pageSize: "50" });
     const orderQuery = new URLSearchParams({ q: adminState.orderQuery, status: adminState.orderStatus, page: String(adminState.orderPage), pageSize: "50" });
-    const [overview, users, orders, tickets, upstream, plans, system, paymentSettings, usageSettings, emailSettings] = await Promise.all([
+    const [overview, operations, users, orders, tickets, upstream, plans, system, paymentSettings, usageSettings, emailSettings] = await Promise.all([
       adminApiRequest("/admin/overview"),
+      adminApiRequest("/admin/metrics"),
       adminApiRequest(`/admin/users?${userQuery}`),
       adminApiRequest(`/admin/orders?${orderQuery}`),
       adminApiRequest("/admin/tickets"),
@@ -746,6 +764,7 @@ async function loadAdminState() {
       adminApiRequest("/admin/settings/email"),
     ]);
     adminState.metrics = overview.metrics;
+    adminState.operations = operations;
     adminState.users = users.users;
     adminState.userPagination = users.pagination;
     adminState.orders = orders.orders;
