@@ -1551,9 +1551,9 @@ async function syncProviderUsageInBackground() {
   try {
     const records = await fetchProviderUsageRecords();
     const result = applyUsageRecords(records, "provider-api");
-    console.log(`Provider usage sync: updated ${result.updated.length}, rejected ${result.rejected.length}`);
+    logEvent("upstream.usage_sync", { count: result.updated.length, success: true });
   } catch (error) {
-    console.warn(`Provider usage sync failed: ${error.message}`);
+    logEvent("upstream.usage_sync", { code: error.code || "USAGE_SYNC_FAILED", success: false }, "warn");
   } finally {
     providerUsageSyncInFlight = false;
   }
@@ -1944,6 +1944,7 @@ app.post("/api/auth/register", rateLimit({ name: "register", max: 5, windowMs: 1
       return inserted;
     })();
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(result.lastInsertRowid);
+    logEvent("auth.register", { userId: user.id, success: true });
     res.status(201).json({ user: safeUser(user), token: createSession(user.id) });
   } catch (error) { next(error); }
 });
@@ -1954,7 +1955,11 @@ app.post("/api/auth/login", rateLimit({ name: "user-login", max: 10, windowMs: 1
     const password = String(req.body?.password || "");
     if (!allowDemoAccount && email === demoEmail) throw apiError("INVALID_CREDENTIALS", "Email or password is incorrect", 401);
     const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
-    if (!user || !bcrypt.compareSync(password, user.password_hash)) throw apiError("INVALID_CREDENTIALS", "Email or password is incorrect", 401);
+    if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+      logEvent("auth.login_failed", { success: false, reason: "invalid_credentials" }, "warn");
+      throw apiError("INVALID_CREDENTIALS", "Email or password is incorrect", 401);
+    }
+    logEvent("auth.login", { userId: user.id, success: true });
     res.json({ user: safeUser(user), token: createSession(user.id) });
   } catch (error) { next(error); }
 });
@@ -1976,6 +1981,7 @@ app.post("/api/auth/password/forgot", rateLimit({ name: "password-forgot", max: 
   } catch {
     db.prepare("DELETE FROM password_reset_tokens WHERE token_hash = ?").run(tokenHash);
   }
+  logEvent("auth.password_reset_requested", { userId: user.id, success: true });
   res.json({ ok: true, message: "If the address is registered, a reset email will be sent." });
 });
 
@@ -2144,6 +2150,7 @@ async function completeOrder(order, baseUrl = publicBaseUrl) {
   transaction();
   const subscription = currentSubscription(order.user_id);
   recordUsageSnapshot(subscription, timestamp);
+  logEvent("subscription.activated", { userId: order.user_id, orderId: order.id, sourceId: subscription.source_id, status: "active", success: true });
   return { order: { ...order, status: "paid", confirmedAt: timestamp }, subscription: subscriptionView(subscription, currentPlan(subscription), baseUrl) };
 }
 
