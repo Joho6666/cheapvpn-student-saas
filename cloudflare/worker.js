@@ -106,6 +106,42 @@ async function expireSubscriptions(env) {
   await env.DB.prepare("UPDATE subscriptions SET status = 'expired', updated_at = ? WHERE status = 'active' AND expires_at <= ?").bind(now(), now()).run();
 }
 
+async function hasEnabledUpstream(env) {
+  const result = await env.DB.prepare("SELECT COUNT(*) AS count FROM upstream_sources WHERE enabled = 1").first();
+  return Number(result?.count || 0) > 0;
+}
+
+async function productionChecks(env) {
+  let payment = {
+    mode: ["mock", "manual", "webhook"].includes(String(env.PAYMENT_MODE || "manual")) ? String(env.PAYMENT_MODE || "manual") : "manual",
+    manualInstructions: "",
+    checkoutTemplate: "",
+    webhookSecret: "",
+    methods: paymentMethodCatalog.filter((method) => ["wechat_pay", "alipay", "card"].includes(method.id)),
+  };
+  let database = false;
+  let upstream = false;
+  let paymentConfigured = false;
+  let storedAdminPassword = "";
+  try {
+    await env.DB.prepare("SELECT 1 AS ok").first();
+    database = true;
+    storedAdminPassword = await setting(env, "admin_password_hash", "");
+    payment = await paymentConfig(env);
+    paymentConfigured = true;
+    upstream = await hasEnabledUpstream(env);
+  } catch { /* Return a stable 503 readiness response when D1 or encrypted settings are unavailable. */ }
+  const checks = {
+    database,
+    upstream,
+    payment: paymentConfigured && payment.mode !== "mock" && paymentReady(payment),
+    encryption: Boolean(env.ADMIN_ENCRYPTION_KEY),
+    adminPassword: Boolean(storedAdminPassword || (env.ADMIN_PASSWORD && String(env.ADMIN_PASSWORD).length >= 12)),
+    demoAccountDisabled: String(env.ALLOW_DEMO_ACCOUNT || "false").toLowerCase() !== "true",
+  };
+  return { checks, payment, ready: Object.values(checks).every(Boolean) };
+}
+
 function subLinks(subscription, request, env) {
   const root = publicBase(request, env);
   return { universal: `${root}/s/${subscription.token}`, clash: `${root}/s/clash/${subscription.token}`, singbox: `${root}/s/singbox/${subscription.token}` };
@@ -162,6 +198,7 @@ async function syncSubscription(subscription, env) {
 
 async function confirmOrder(order, env) {
   if (!order || order.status !== "pending") return null;
+  if (!await hasEnabledUpstream(env)) throw new Error("Configure an enabled upstream source before activating a customer subscription");
   const timestamp = now();
   const plan = await env.DB.prepare("SELECT * FROM plans WHERE id = ?").bind(order.plan_id).first();
   if (!plan) throw new Error("Plan not found");
@@ -330,6 +367,98 @@ async function passwordResetEmailConfig(env) {
   };
 }
 
+function decodeSubscriptionText(content) {
+  const compact = String(content || "").trim().replace(/\s+/g, "");
+  if (!compact || !/^[A-Za-z0-9+/_=-]+$/.test(compact)) return String(content || "");
+  try {
+    const decoded = decoder.decode(Uint8Array.from(atob(compact.replace(/-/g, "+").replace(/_/g, "/") + "==="), (char) => char.charCodeAt(0)));
+    return /(?:^|\n)(?:vless|vmess|trojan|ss|ssr|hysteria|hysteria2|tuic|wireguard):\/\//im.test(decoded) ? decoded : String(content || "");
+  } catch { return String(content || ""); }
+}
+
+function parseUniversalNodes(content) {
+  return decodeSubscriptionText(content).split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(vless|vmess|trojan|ss|ssr|hysteria|hysteria2|tuic|wireguard):\/\//i.test(line)).map((line, index) => {
+    let name = `Node ${index + 1}`;
+    try { name = decodeURIComponent(new URL(line).hash.slice(1)) || name; } catch { /* Provider names are optional. */ }
+    return { index, protocol: line.slice(0, line.indexOf(":")).toLowerCase(), rawName: name };
+  });
+}
+
+function formatLooksUsable(content, format) {
+  const value = String(content || "").trim();
+  if (!value) return false;
+  if (format === "universal") return parseUniversalNodes(value).length > 0;
+  if (format === "singbox") {
+    try { JSON.parse(value); return true; } catch { return false; }
+  }
+  return /proxies\s*:|proxy-groups\s*:|server\s*:/i.test(value);
+}
+
+async function sourceUrls(source, env) {
+  const universal = await decrypt(source.universal_url_encrypted || source.url_encrypted, env);
+  const clash = source.clash_url_encrypted ? await decrypt(source.clash_url_encrypted, env) : universal;
+  const singbox = source.singbox_url_encrypted ? await decrypt(source.singbox_url_encrypted, env) : universal;
+  return { universal, clash, singbox };
+}
+
+async function ensureDefaultSource(env) {
+  const current = await env.DB.prepare("SELECT id FROM upstream_sources WHERE enabled = 1 AND is_default = 1 ORDER BY id LIMIT 1").first();
+  if (current) {
+    await env.DB.prepare("UPDATE upstream_sources SET is_default = 0 WHERE enabled = 1 AND id != ?").bind(current.id).run();
+    return current.id;
+  }
+  const replacement = await env.DB.prepare("SELECT id FROM upstream_sources WHERE enabled = 1 ORDER BY id LIMIT 1").first();
+  if (replacement) await env.DB.prepare("UPDATE upstream_sources SET is_default = 1 WHERE id = ?").bind(replacement.id).run();
+  return replacement?.id || null;
+}
+
+function normalizeUsageExpiry(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) ? new Date(numeric < 1e12 ? numeric * 1000 : numeric) : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+async function fetchProviderUsageRecords(env) {
+  const url = await setting(env, "usage_api_url_encrypted", "");
+  const token = await setting(env, "usage_api_token_encrypted", "");
+  if (!url) throw new Error("Usage API is not configured");
+  const response = await fetch(url, { headers: { Accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) } });
+  if (!response.ok) throw new Error(`Usage API responded with ${response.status}`);
+  const payload = await response.json();
+  const records = Array.isArray(payload) ? payload : payload?.records;
+  if (!Array.isArray(records) || !records.length) throw new Error("Usage API returned no records");
+  return records.slice(0, 500);
+}
+
+async function applyUsageRecords(records, env, source) {
+  const updated = [];
+  const rejected = [];
+  for (const [index, record] of records.entries()) {
+    const user = record?.userId
+      ? await env.DB.prepare("SELECT id, email FROM users WHERE id = ?").bind(Number(record.userId)).first()
+      : await env.DB.prepare("SELECT id, email FROM users WHERE email = ?").bind(String(record?.email || record?.userEmail || "").trim().toLowerCase()).first();
+    const usedGb = Number(record?.usedGb ?? record?.used_gb ?? record?.used);
+    const subscription = user ? await env.DB.prepare("SELECT s.id, p.data_total_gb FROM subscriptions s JOIN plans p ON p.id = s.plan_id WHERE s.user_id = ? AND s.status = 'active'").bind(user.id).first() : null;
+    if (!user || !Number.isFinite(usedGb) || usedGb < 0) { rejected.push({ index, reason: !user ? "USER_NOT_FOUND" : "INVALID_USED_GB" }); continue; }
+    if (!subscription || usedGb > Number(subscription.data_total_gb)) { rejected.push({ index, reason: !subscription ? "SUBSCRIPTION_NOT_FOUND" : "USED_GB_EXCEEDS_PLAN" }); continue; }
+    const totalValue = record?.totalGb ?? record?.total_gb ?? record?.upstreamTotalGb;
+    const upstreamTotalGb = totalValue === undefined || totalValue === null || totalValue === "" ? null : Number(totalValue);
+    if (upstreamTotalGb !== null && (!Number.isFinite(upstreamTotalGb) || upstreamTotalGb < 0)) { rejected.push({ index, reason: "INVALID_TOTAL_GB" }); continue; }
+    const expiryValue = record?.expiresAt ?? record?.expires_at ?? record?.upstreamExpiresAt ?? record?.expireAt;
+    const upstreamExpiresAt = normalizeUsageExpiry(expiryValue);
+    if (expiryValue !== undefined && expiryValue !== null && expiryValue !== "" && !upstreamExpiresAt) { rejected.push({ index, reason: "INVALID_EXPIRES_AT" }); continue; }
+    const capturedAt = now();
+    await env.DB.prepare("UPDATE subscriptions SET data_used_gb = ?, usage_source = ?, upstream_used_gb = ?, upstream_total_gb = COALESCE(?, upstream_total_gb), upstream_expires_at = COALESCE(?, upstream_expires_at), upstream_synced_at = ?, updated_at = ? WHERE id = ?")
+      .bind(usedGb, source, usedGb, upstreamTotalGb, upstreamExpiresAt, capturedAt, capturedAt, subscription.id).run();
+    await env.DB.prepare("INSERT INTO usage_snapshots (subscription_id, user_id, used_gb, total_gb, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(subscription.id, user.id, usedGb, subscription.data_total_gb, source, capturedAt).run();
+    updated.push({ userId: user.id, email: user.email, usedGb, totalGb: Number(subscription.data_total_gb), upstreamTotalGb, upstreamExpiresAt });
+  }
+  await expireSubscriptions(env);
+  return { updated, rejected };
+}
+
 async function adminPasswordMatches(password, env) {
   const storedHash = await setting(env, "admin_password_hash", "");
   return storedHash ? bcrypt.compareSync(password, storedHash) : Boolean(env.ADMIN_PASSWORD && password === env.ADMIN_PASSWORD);
@@ -454,6 +583,7 @@ async function userRoutes(request, env, path) {
   if (request.method === "POST" && path === "/api/orders") {
     const payment = await paymentConfig(env);
     if (!paymentReady(payment)) return failure("PAYMENT_NOT_CONFIGURED", "Payment instructions or payment verification are not configured", 503);
+    if (!await hasEnabledUpstream(env)) return failure("UPSTREAM_NOT_CONFIGURED", "Configure an enabled upstream source before creating a customer order", 503);
     const body = await requestData(request); const requestId = String(request.headers.get("Idempotency-Key") || "").trim().slice(0, 128);
     if (requestId) {
       const replay = await env.DB.prepare("SELECT * FROM orders WHERE user_id = ? AND client_request_id = ?").bind(auth.user.id, requestId).first();
@@ -536,7 +666,8 @@ async function adminRoutes(request, env, path) {
     const usageUrl = await setting(env, "usage_api_url_encrypted", "");
     const emailConfig = await passwordResetEmailConfig(env);
     const storedAdminPassword = await setting(env, "admin_password_hash", "");
-    return json({ publicBaseUrl: env.PUBLIC_BASE_URL || "", payment: { mode: payment.mode, ready: paymentReady(payment), productionReady: payment.mode !== "mock" && paymentReady(payment), checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret) }, upstream: { configured: Boolean(sources.total), total: Number(sources.total || 0), enabled: Number(sources.enabled || 0), assignmentMode: await setting(env, "upstream_assignment_mode", "default") }, usage: { apiConfigured: Boolean(usageUrl), automaticSync: false, syncIntervalMs: Number(await setting(env, "usage_sync_interval_ms", "0")) }, email: { configured: Boolean(emailConfig.apiKey && emailConfig.from) }, security: { encryptionKeyConfigured: Boolean(env.ADMIN_ENCRYPTION_KEY), adminPasswordStrong: Boolean(storedAdminPassword || (env.ADMIN_PASSWORD && env.ADMIN_PASSWORD.length >= 12)) } });
+    const syncIntervalMs = Number(await setting(env, "usage_sync_interval_ms", "0"));
+    return json({ publicBaseUrl: env.PUBLIC_BASE_URL || "", payment: { mode: payment.mode, ready: paymentReady(payment), productionReady: payment.mode !== "mock" && paymentReady(payment), checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret) }, upstream: { configured: Boolean(sources.total), total: Number(sources.total || 0), enabled: Number(sources.enabled || 0), assignmentMode: await setting(env, "upstream_assignment_mode", "default") }, usage: { apiConfigured: Boolean(usageUrl), automaticSync: Boolean(usageUrl && syncIntervalMs >= 300000), syncIntervalMs }, email: { configured: Boolean(emailConfig.apiKey && emailConfig.from) }, security: { encryptionKeyConfigured: Boolean(env.ADMIN_ENCRYPTION_KEY), adminPasswordStrong: Boolean(storedAdminPassword || (env.ADMIN_PASSWORD && env.ADMIN_PASSWORD.length >= 12)) } });
   }
   if (request.method === "GET" && path === "/api/admin/settings/payment") {
     const payment = await paymentConfig(env);
@@ -561,6 +692,11 @@ async function adminRoutes(request, env, path) {
     if (body.clearToken) await env.DB.prepare("DELETE FROM settings WHERE key = 'usage_api_token_encrypted'").run(); else if (body.token) await setSetting(env, "usage_api_token_encrypted", await encrypt(String(body.token).trim(), env));
     await setSetting(env, "usage_sync_interval_ms", String(interval)); return json({ ok: true, syncIntervalMs: interval });
   }
+  if (request.method === "PUT" && path === "/api/admin/settings/routing") {
+    const body = await requestData(request); const mode = String(body.assignmentMode || "default");
+    if (!["default", "round_robin"].includes(mode)) return failure("INVALID_ASSIGNMENT_MODE", "Assignment mode must be default or round_robin");
+    await setSetting(env, "upstream_assignment_mode", mode); return json({ ok: true, assignmentMode: mode });
+  }
   if (request.method === "GET" && path === "/api/admin/settings/email") { const config = await passwordResetEmailConfig(env); return json({ configured: Boolean(config.apiKey && config.from), resendConfigured: Boolean(config.apiKey), from: config.from || "" }); }
   if (request.method === "PUT" && path === "/api/admin/settings/email") {
     const body = await requestData(request); const from = String(body.from || "").trim().slice(0, 180); const resendApiKey = String(body.resendApiKey || "").trim();
@@ -577,16 +713,166 @@ async function adminRoutes(request, env, path) {
   }
   const planMatch = path.match(/^\/api\/admin\/plans\/(\d+)$/);
   if (planMatch && request.method === "PUT") { const body = await requestData(request); await env.DB.prepare("UPDATE plans SET name = COALESCE(?, name), first_month_price = COALESCE(?, first_month_price), renewal_price = COALESCE(?, renewal_price), data_total_gb = COALESCE(?, data_total_gb), device_limit = COALESCE(?, device_limit), billing_period_months = COALESCE(?, billing_period_months), active = COALESCE(?, active) WHERE id = ?").bind(body.name ?? null, body.firstMonthPrice ?? null, body.renewalPrice ?? null, body.dataTotalGb ?? null, body.deviceLimit ?? null, body.billingPeriodMonths ?? null, typeof body.active === "boolean" ? Number(body.active) : null, Number(planMatch[1])).run(); return json({ ok: true }); }
+  if (planMatch && request.method === "DELETE") {
+    const plan = await env.DB.prepare("SELECT id FROM plans WHERE id = ?").bind(Number(planMatch[1])).first();
+    if (!plan) return failure("PLAN_NOT_FOUND", "Plan not found", 404);
+    const activePlans = await env.DB.prepare("SELECT COUNT(*) AS count FROM plans WHERE active = 1").first();
+    if (Number(activePlans.count) <= 1) return failure("LAST_ACTIVE_PLAN", "Keep at least one active plan", 409);
+    await env.DB.prepare("UPDATE plans SET active = 0 WHERE id = ?").bind(plan.id).run(); return json({ ok: true });
+  }
   if (request.method === "GET" && path === "/api/admin/upstream") { const sources = (await env.DB.prepare("SELECT * FROM upstream_sources ORDER BY is_default DESC, id ASC").all()).results; return json({ sources: await Promise.all(sources.map((source) => sourceView(source, env))) }); }
   if (request.method === "POST" && path === "/api/admin/sources") {
-    const body = await requestData(request); const url = String(body.url || "").trim(); if (!/^https?:\/\//.test(url)) return failure("INVALID_UPSTREAM_URL", "Enter a valid HTTPS or HTTP subscription URL");
-    const timestamp = now(); const result = await env.DB.prepare("INSERT INTO upstream_sources (name, url_encrypted, universal_url_encrypted, clash_url_encrypted, singbox_url_encrypted, enabled, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)").bind(String(body.name || "Upstream").trim().slice(0, 100), await encrypt(url, env), await encrypt(url, env), body.clashUrl ? await encrypt(String(body.clashUrl), env) : null, body.singboxUrl ? await encrypt(String(body.singboxUrl), env) : null, (await env.DB.prepare("SELECT COUNT(*) AS count FROM upstream_sources").first()).count === 0 ? 1 : 0, timestamp, timestamp).run();
+    const body = await requestData(request); const url = String(body.url || body.universalUrl || "").trim(); const clashUrl = String(body.clashUrl || "").trim(); const singboxUrl = String(body.singboxUrl || "").trim();
+    if (!/^https?:\/\//i.test(url) || (clashUrl && !/^https?:\/\//i.test(clashUrl)) || (singboxUrl && !/^https?:\/\//i.test(singboxUrl))) return failure("INVALID_UPSTREAM_URL", "Upstream URLs must start with http:// or https://");
+    const timestamp = now(); const result = await env.DB.prepare("INSERT INTO upstream_sources (name, url_encrypted, universal_url_encrypted, clash_url_encrypted, singbox_url_encrypted, enabled, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)").bind(String(body.name || "Upstream").trim().slice(0, 100), await encrypt(url, env), await encrypt(url, env), clashUrl ? await encrypt(clashUrl, env) : null, singboxUrl ? await encrypt(singboxUrl, env) : null, (await env.DB.prepare("SELECT COUNT(*) AS count FROM upstream_sources WHERE enabled = 1").first()).count === 0 ? 1 : 0, timestamp, timestamp).run();
+    await ensureDefaultSource(env);
     return json({ source: await sourceView(await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(result.meta.last_row_id).first(), env) }, 201);
   }
-  const sourceMatch = path.match(/^\/api\/admin\/sources\/(\d+)(?:\/(sync))?$/);
-  if (sourceMatch && request.method === "POST" && sourceMatch[2] === "sync") { const source = await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(Number(sourceMatch[1])).first(); if (!source) return failure("SOURCE_NOT_FOUND", "Source not found", 404); const subscriptions = (await env.DB.prepare("SELECT * FROM subscriptions WHERE source_id = ?").bind(source.id).all()).results; const results = await Promise.allSettled(subscriptions.map((subscription) => syncSubscription(subscription, env))); return json({ ok: true, synced: results.filter((result) => result.status === "fulfilled").length, failed: results.filter((result) => result.status === "rejected").length }); }
-  if (sourceMatch && request.method === "PUT") { const body = await requestData(request); if (body.isDefault) await env.DB.prepare("UPDATE upstream_sources SET is_default = 0").run(); await env.DB.prepare("UPDATE upstream_sources SET name = COALESCE(?, name), enabled = COALESCE(?, enabled), is_default = COALESCE(?, is_default), updated_at = ? WHERE id = ?").bind(body.name ?? null, typeof body.enabled === "boolean" ? Number(body.enabled) : null, typeof body.isDefault === "boolean" ? Number(body.isDefault) : null, now(), Number(sourceMatch[1])).run(); return json({ ok: true }); }
-  if (sourceMatch && request.method === "DELETE") { await env.DB.prepare("DELETE FROM upstream_sources WHERE id = ?").bind(Number(sourceMatch[1])).run(); return json({ ok: true }); }
+  const sourceMatch = path.match(/^\/api\/admin\/sources\/(\d+)(?:\/(sync|test|node-discovery|node-rules))?$/);
+  if (sourceMatch && request.method === "POST" && sourceMatch[2] === "sync") {
+    const source = await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(Number(sourceMatch[1])).first();
+    if (!source) return failure("SOURCE_NOT_FOUND", "Source not found", 404);
+    const subscriptions = (await env.DB.prepare("SELECT * FROM subscriptions WHERE source_id = ? AND status = 'active'").bind(source.id).all()).results;
+    const results = await Promise.allSettled(subscriptions.map((subscription) => syncSubscription(subscription, env)));
+    return json({ ok: true, synced: results.filter((result) => result.status === "fulfilled").length, failed: results.filter((result) => result.status === "rejected").length });
+  }
+  if (sourceMatch && request.method === "POST" && sourceMatch[2] === "test") {
+    const source = await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(Number(sourceMatch[1])).first();
+    if (!source) return failure("SOURCE_NOT_FOUND", "Source not found", 404);
+    const urls = await sourceUrls(source, env);
+    const formats = await Promise.all(Object.entries(urls).map(async ([format, url]) => {
+      try {
+        const content = await fetchText(url);
+        return { format, ok: formatLooksUsable(content, format), nodes: format === "universal" ? parseUniversalNodes(content).length : null };
+      } catch (error) { return { format, ok: false, nodes: null, error: String(error.message || error) }; }
+    }));
+    const universal = formats.find((format) => format.format === "universal");
+    return json({ source: source.name, ok: Boolean(universal?.ok), passed: formats.filter((format) => format.ok).length, total: formats.length, formats });
+  }
+  if (sourceMatch && request.method === "POST" && sourceMatch[2] === "node-discovery") {
+    const source = await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(Number(sourceMatch[1])).first();
+    if (!source) return failure("SOURCE_NOT_FOUND", "Source not found", 404);
+    const subscriptions = (await env.DB.prepare("SELECT universal_content FROM subscriptions WHERE status = 'active' AND source_id = ? AND universal_content != '' ORDER BY updated_at DESC LIMIT 1").bind(source.id).all()).results;
+    const content = subscriptions[0]?.universal_content || await fetchText((await sourceUrls(source, env)).universal);
+    const nodes = parseUniversalNodes(content);
+    const rules = nodes.map((node, index) => ({ match: node.rawName, name: `节点 ${String(index + 1).padStart(2, "0")}` }));
+    return json({ warning: "Cloudflare 版本仅依据供应商节点名称生成建议，未执行本地 TCP/IP 归属地探测。", nodes, rules, cached: false });
+  }
+  if (sourceMatch && request.method === "PUT" && sourceMatch[2] === "node-rules") {
+    const source = await env.DB.prepare("SELECT id FROM upstream_sources WHERE id = ?").bind(Number(sourceMatch[1])).first();
+    if (!source) return failure("SOURCE_NOT_FOUND", "Source not found", 404);
+    const body = await requestData(request);
+    const rules = Array.isArray(body.rules) ? body.rules.map((rule) => ({ match: String(rule?.match || "").trim().slice(0, 120), name: String(rule?.name || "").trim().slice(0, 120) })).filter((rule) => rule.match && rule.name).slice(0, 200) : [];
+    await env.DB.prepare("UPDATE upstream_sources SET node_rules_json = ?, updated_at = ? WHERE id = ?").bind(JSON.stringify(rules), now(), source.id).run();
+    return json({ source: await sourceView(await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(source.id).first(), env) });
+  }
+  if (sourceMatch && request.method === "PUT" && !sourceMatch[2]) {
+    const source = await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(Number(sourceMatch[1])).first();
+    if (!source) return failure("SOURCE_NOT_FOUND", "Source not found", 404);
+    const body = await requestData(request);
+    const name = String(body.name ?? source.name).trim().slice(0, 100);
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : Boolean(source.enabled);
+    const makeDefault = typeof body.isDefault === "boolean" ? body.isDefault : Boolean(source.is_default && enabled);
+    if (!name) return failure("INVALID_SOURCE_NAME", "Source name is required");
+    if (makeDefault && !enabled) return failure("DEFAULT_SOURCE_DISABLED", "The default source must be enabled", 409);
+    const universalUrl = Object.hasOwn(body, "url") || Object.hasOwn(body, "universalUrl") ? String(body.url ?? body.universalUrl ?? "").trim() : null;
+    const clashUrl = Object.hasOwn(body, "clashUrl") ? String(body.clashUrl || "").trim() : null;
+    const singboxUrl = Object.hasOwn(body, "singboxUrl") ? String(body.singboxUrl || "").trim() : null;
+    for (const value of [universalUrl, clashUrl, singboxUrl]) if (value !== null && value && !/^https?:\/\//i.test(value)) return failure("INVALID_UPSTREAM_URL", "Upstream URLs must start with http:// or https://");
+    const currentUrls = universalUrl === null || clashUrl === null || singboxUrl === null ? await sourceUrls(source, env) : null;
+    const nextUniversal = universalUrl === null ? currentUrls.universal : universalUrl;
+    const nextClash = clashUrl === null ? currentUrls.clash : clashUrl || null;
+    const nextSingbox = singboxUrl === null ? currentUrls.singbox : singboxUrl || null;
+    if (makeDefault) await env.DB.prepare("UPDATE upstream_sources SET is_default = 0").run();
+    await env.DB.prepare("UPDATE upstream_sources SET name = ?, url_encrypted = ?, universal_url_encrypted = ?, clash_url_encrypted = ?, singbox_url_encrypted = ?, enabled = ?, is_default = ?, updated_at = ? WHERE id = ?")
+      .bind(name, await encrypt(nextUniversal, env), await encrypt(nextUniversal, env), nextClash ? await encrypt(nextClash, env) : null, nextSingbox ? await encrypt(nextSingbox, env) : null, Number(enabled), Number(makeDefault && enabled), now(), source.id).run();
+    await ensureDefaultSource(env);
+    return json({ source: await sourceView(await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(source.id).first(), env) });
+  }
+  if (sourceMatch && request.method === "DELETE" && !sourceMatch[2]) {
+    const source = await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(Number(sourceMatch[1])).first();
+    if (!source) return failure("SOURCE_NOT_FOUND", "Source not found", 404);
+    const bound = await env.DB.prepare("SELECT COUNT(*) AS count FROM subscriptions WHERE source_id = ? AND status = 'active'").bind(source.id).first();
+    if (Number(bound?.count || 0) > 0) return failure("SOURCE_IN_USE", `This source is bound to ${bound.count} active subscription(s); reassign them before deleting`, 409);
+    await env.DB.prepare("DELETE FROM upstream_sources WHERE id = ?").bind(source.id).run();
+    await ensureDefaultSource(env);
+    return json({ ok: true });
+  }
+  const adminUserMatch = path.match(/^\/api\/admin\/users\/(\d+)\/(source|usage|usage\/history|subscription)$/);
+  if (adminUserMatch && request.method === "PUT" && adminUserMatch[2] === "source") {
+    const userId = Number(adminUserMatch[1]);
+    const subscription = await env.DB.prepare("SELECT id, status FROM subscriptions WHERE user_id = ?").bind(userId).first();
+    if (!subscription) return failure("SUBSCRIPTION_NOT_FOUND", "User has no subscription", 404);
+    if (subscription.status !== "active") return failure("SUBSCRIPTION_NOT_ACTIVE", "Only an active subscription can be assigned a source", 409);
+    const body = await requestData(request); const sourceId = Number(body.sourceId) || null;
+    if (sourceId) {
+      const source = await env.DB.prepare("SELECT id, enabled FROM upstream_sources WHERE id = ?").bind(sourceId).first();
+      if (!source) return failure("SOURCE_NOT_FOUND", "Source not found", 404);
+      if (!source.enabled) return failure("SOURCE_DISABLED", "Cannot bind a disabled source", 409);
+    }
+    await env.DB.prepare("UPDATE subscriptions SET source_id = ?, last_sync_at = NULL, last_sync_status = 'pending', last_sync_error = NULL, updated_at = ? WHERE id = ?").bind(sourceId, now(), subscription.id).run();
+    return json({ ok: true, sourceId });
+  }
+  if (adminUserMatch && adminUserMatch[2] === "usage" && request.method === "PATCH") {
+    const userId = Number(adminUserMatch[1]);
+    const subscription = await env.DB.prepare("SELECT s.id, p.data_total_gb FROM subscriptions s JOIN plans p ON p.id = s.plan_id WHERE s.user_id = ? AND s.status = 'active'").bind(userId).first();
+    if (!subscription) return failure("SUBSCRIPTION_NOT_FOUND", "User has no subscription", 404);
+    const body = await requestData(request); const usedGb = Number(body.usedGb);
+    if (!Number.isFinite(usedGb) || usedGb < 0 || usedGb > Number(subscription.data_total_gb)) return failure("INVALID_USAGE", `Used data must be between 0 and ${subscription.data_total_gb} GB`);
+    const timestamp = now();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE subscriptions SET data_used_gb = ?, upstream_used_gb = NULL, usage_source = 'manual', updated_at = ? WHERE id = ?").bind(usedGb, timestamp, subscription.id),
+      env.DB.prepare("INSERT INTO usage_snapshots (subscription_id, user_id, used_gb, total_gb, source, captured_at) VALUES (?, ?, ?, ?, 'manual', ?)").bind(subscription.id, userId, usedGb, subscription.data_total_gb, timestamp),
+    ]);
+    return json({ ok: true, usedGb, totalGb: Number(subscription.data_total_gb) });
+  }
+  if (adminUserMatch && adminUserMatch[2] === "usage/history" && request.method === "GET") {
+    const userId = Number(adminUserMatch[1]);
+    const user = await env.DB.prepare("SELECT id, name, email FROM users WHERE id = ?").bind(userId).first();
+    if (!user) return failure("USER_NOT_FOUND", "User not found", 404);
+    const query = new URL(request.url).searchParams; const limit = Math.min(100, Math.max(1, Number(query.get("limit")) || 30));
+    const history = (await env.DB.prepare("SELECT used_gb, total_gb, source, captured_at FROM usage_snapshots WHERE user_id = ? ORDER BY captured_at DESC LIMIT ?").bind(userId, limit).all()).results.map((row) => ({ usedGb: Number(row.used_gb), totalGb: Number(row.total_gb), source: row.source, capturedAt: row.captured_at }));
+    return json({ user: { id: user.id, name: user.name, email: user.email }, history });
+  }
+  if (adminUserMatch && adminUserMatch[2] === "subscription" && request.method === "PATCH") {
+    const userId = Number(adminUserMatch[1]); const body = await requestData(request);
+    const subscription = await env.DB.prepare("SELECT s.*, p.billing_period_months FROM subscriptions s JOIN plans p ON p.id = s.plan_id WHERE s.user_id = ?").bind(userId).first();
+    if (!subscription) return failure("SUBSCRIPTION_NOT_FOUND", "User has no subscription", 404);
+    if (body.action === "expire") await env.DB.prepare("UPDATE subscriptions SET status = 'expired', updated_at = ? WHERE id = ?").bind(now(), subscription.id).run();
+    else if (body.action === "reset") await env.DB.prepare("UPDATE subscriptions SET token = ?, updated_at = ? WHERE id = ?").bind(randomToken("cvpn_"), now(), subscription.id).run();
+    else if (body.action === "extend") {
+      const months = Math.min(24, Math.max(1, Number(body.months || subscription.billing_period_months || 1)));
+      const currentExpiry = Math.max(Date.now(), Date.parse(subscription.expires_at) || 0);
+      await env.DB.prepare("UPDATE subscriptions SET status = 'active', expires_at = ?, data_used_gb = 0, upstream_used_gb = NULL, upstream_total_gb = NULL, upstream_expires_at = NULL, usage_source = 'manual', last_sync_at = NULL, last_sync_status = 'pending', last_sync_error = NULL, updated_at = ? WHERE id = ?")
+        .bind(new Date(currentExpiry + months * 30 * 24 * 60 * 60 * 1000).toISOString(), now(), subscription.id).run();
+    } else return failure("INVALID_SUBSCRIPTION_ACTION", "Action must be extend, expire or reset");
+    return json({ subscription: subscriptionView(await subscriptionForUser(userId, env), request, env) });
+  }
+  if (request.method === "GET" && path === "/api/admin/users/export.csv") {
+    const query = new URL(request.url).searchParams; const q = String(query.get("q") || "").trim().toLowerCase().slice(0, 80);
+    const where = q ? "WHERE lower(u.name) LIKE ? OR lower(u.email) LIKE ?" : ""; const values = q ? [`%${q}%`, `%${q}%`] : [];
+    const rows = (await env.DB.prepare(`SELECT u.name, u.email, u.created_at, s.status, s.data_used_gb, s.upstream_used_gb, s.usage_source, p.data_total_gb, s.expires_at FROM users u LEFT JOIN subscriptions s ON s.user_id = u.id LEFT JOIN plans p ON p.id = s.plan_id ${where} ORDER BY u.created_at DESC`).bind(...values).all()).results;
+    const cell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const lines = ["name,email,subscription_status,used_gb,total_gb,remaining_gb,expires_at,usage_source,created_at", ...rows.map((row) => {
+      const used = Math.min(Number(row.data_total_gb || 0), Math.max(0, Number(row.upstream_used_gb ?? row.data_used_gb ?? 0)));
+      return [row.name, row.email, row.status || "inactive", used, row.data_total_gb || 0, Math.max(0, Number(row.data_total_gb || 0) - used), row.expires_at || "", row.usage_source || "manual", row.created_at].map(cell).join(",");
+    })];
+    return new Response(`\ufeff${lines.join("\r\n")}\r\n`, { headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="cheapvpn-users-${new Date().toISOString().slice(0, 10)}.csv"` } });
+  }
+  if (request.method === "POST" && path === "/api/admin/usage/import") {
+    const body = await requestData(request); const records = Array.isArray(body.records) ? body.records.slice(0, 500) : [];
+    if (!records.length) return failure("EMPTY_USAGE_IMPORT", "Provide a non-empty records array");
+    return json({ ok: true, source: "provider-import", ...(await applyUsageRecords(records, env, "provider-import")) });
+  }
+  if (request.method === "POST" && path === "/api/admin/usage/sync") {
+    try { return json({ ok: true, source: "provider-api", ...(await applyUsageRecords(await fetchProviderUsageRecords(env), env, "provider-api")) }); }
+    catch (error) { return failure("USAGE_API_FAILED", String(error.message || error), 502); }
+  }
+  if (request.method === "POST" && path === "/api/admin/sync") {
+    const subscriptions = (await env.DB.prepare("SELECT * FROM subscriptions WHERE status = 'active'").all()).results;
+    const results = await Promise.allSettled(subscriptions.map((subscription) => syncSubscription(subscription, env)));
+    return json({ total: subscriptions.length, success: results.filter((item) => item.status === "fulfilled").length, errors: results.filter((item) => item.status === "rejected").length, stale: 0, syncedAt: now() });
+  }
   if (request.method === "GET" && path === "/api/admin/users") {
     const query = new URL(request.url).searchParams; const q = String(query.get("q") || "").trim().toLowerCase().slice(0, 80); const page = Math.max(1, Number(query.get("page")) || 1); const pageSize = Math.min(100, Math.max(1, Number(query.get("pageSize")) || 50));
     const where = q ? "WHERE lower(u.name) LIKE ? OR lower(u.email) LIKE ?" : ""; const values = q ? [`%${q}%`, `%${q}%`] : [];
@@ -625,7 +911,10 @@ export default {
     const url = new URL(request.url); const path = url.pathname;
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": url.origin, "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS", "access-control-allow-headers": "authorization,content-type,idempotency-key" } });
     if (path === "/health") return json({ ok: true, service: "cheapvpn-edge" });
-    if (path === "/health/ready") return json({ ok: Boolean(env.ADMIN_PASSWORD && env.ADMIN_ENCRYPTION_KEY), service: "cheapvpn-edge" }, env.ADMIN_PASSWORD && env.ADMIN_ENCRYPTION_KEY ? 200 : 503);
+    if (path === "/health/ready") {
+      const readiness = await productionChecks(env);
+      return json({ ok: readiness.ready, service: "cheapvpn-edge", checks: readiness.checks, mode: readiness.payment.mode }, readiness.ready ? 200 : 503);
+    }
     if (path === "/api/webhooks/payment" && request.method === "POST") {
       try { return await paymentWebhook(request, env); } catch (error) { return failure("PAYMENT_WEBHOOK_FAILED", String(error.message || "Payment webhook failed"), 502); }
     }
@@ -640,5 +929,11 @@ export default {
     await env.DB.prepare("DELETE FROM user_sessions WHERE expires_at <= ?").bind(now()).run();
     await env.DB.prepare("DELETE FROM admin_sessions WHERE expires_at <= ?").bind(now()).run();
     await env.DB.prepare("DELETE FROM password_reset_tokens WHERE expires_at <= ? OR used_at IS NOT NULL").bind(now()).run();
+    const usageUrl = await setting(env, "usage_api_url_encrypted", "");
+    const usageInterval = Number(await setting(env, "usage_sync_interval_ms", "0"));
+    if (usageUrl && usageInterval >= 300000) {
+      try { await applyUsageRecords(await fetchProviderUsageRecords(env), env, "provider-api"); }
+      catch (error) { console.warn(`Provider usage sync failed: ${String(error.message || error)}`); }
+    }
   }
 };

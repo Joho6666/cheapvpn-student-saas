@@ -90,6 +90,18 @@ The included `compose.yml` runs the app and Caddy together. Caddy obtains and re
 
 Use `docker compose logs -f app` to inspect application logs. Run `docker compose exec app npm run backup` to create a consistent SQLite backup under `./backups/`; schedule that command daily from the server's cron service and copy backups to separate storage. Never expose port `4000` directly in production: only Caddy should be public.
 
+## Cloudflare deployment
+
+The Cloudflare Worker and D1 migrations are deployed separately from the Docker setup. The API token used by Wrangler must be allowed to deploy the Worker, apply D1 migrations, and manage Worker secrets; `wrangler whoami` alone only proves that the token is recognized.
+
+1. Run `npx wrangler whoami` and confirm the account is the one that owns `cheapvpn-prod`.
+2. Apply the committed migrations with `npx wrangler d1 migrations apply cheapvpn-prod --remote --config wrangler.jsonc`.
+3. Set the encrypted production values with `npx wrangler secret put ADMIN_ENCRYPTION_KEY`, `npx wrangler secret put ADMIN_PASSWORD`, and, for webhook payments, `npx wrangler secret put PAYMENT_WEBHOOK_SECRET`. Use a unique value for each secret; do not put secrets in `wrangler.jsonc` or GitHub.
+4. Run `npm run cf:deploy`.
+5. Open `https://cheapvpn.hejiujiuvpn.ccwu.cc/health/ready`. A `200` response is required before accepting customers; a `503` response lists the missing production checks.
+
+If a token can run `wrangler whoami` but D1 or secret commands return an authentication error, update the Cloudflare API token permissions before deploying. A dry-run validates the bundle only and does not update the live Worker.
+
 ## Payment callback
 
 Use `PAYMENT_MODE=mock` for local testing. For manual or provider-driven operation, set `PAYMENT_MODE=manual` or `PAYMENT_MODE=webhook`; the user cannot call the mock confirmation endpoint in those modes. Set `PAYMENT_WEBHOOK_SECRET` and send a JSON `POST /api/webhooks/payment` with the `x-cheapvpn-signature` HMAC-SHA256 header. The payload must contain `provider`, `eventId`, `orderId`, `status` (`paid`, `succeeded`, `failed`, `cancelled`, or `canceled`), and `amount`. Events are idempotent and the amount must match the order. Failed payment events release the pending order without creating a subscription.

@@ -24,7 +24,7 @@
     }
   ],
   "triggers": {
-    "crons": ["*/15 * * * *"]
+    "crons": ["*/5 * * * *"]
   },
   "vars": {
     "PUBLIC_BASE_URL": "https://cheapvpn.hejiujiuvpn.ccwu.cc",

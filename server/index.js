@@ -29,6 +29,12 @@ const adminPassword = process.env.ADMIN_PASSWORD || "change-me-now";
 const productionRuntime = String(process.env.NODE_ENV || "").toLowerCase() === "production";
 const paymentWebhookSecretDefault = process.env.PAYMENT_WEBHOOK_SECRET || "";
 const paymentModeDefault = ["mock", "manual", "webhook"].includes(String(process.env.PAYMENT_MODE || "mock")) ? String(process.env.PAYMENT_MODE || "mock") : "mock";
+const paymentMethodCatalog = [
+  { id: "wechat_pay", label: "WeChat Pay", icon: "chat", description: "微信支付" },
+  { id: "alipay", label: "Alipay", icon: "account_balance_wallet", description: "支付宝" },
+  { id: "card", label: "Visa / Mastercard", icon: "credit_card", description: "信用卡或借记卡" },
+  { id: "bank_transfer", label: "Bank transfer", icon: "account_balance", description: "银行转账" },
+];
 const allowDemoSubscription = String(process.env.ALLOW_DEMO_SUBSCRIPTION || "false").toLowerCase() === "true";
 const allowDemoAccount = String(process.env.ALLOW_DEMO_ACCOUNT || "false").toLowerCase() === "true";
 const paymentCheckoutTemplateDefault = String(process.env.PAYMENT_CHECKOUT_URL_TEMPLATE || "").trim();
@@ -80,6 +86,14 @@ db.exec(`
     amount REAL,
     created_at TEXT NOT NULL,
     FOREIGN KEY(order_id) REFERENCES orders(id)
+  );
+  CREATE TABLE IF NOT EXISTS payment_submissions (
+    order_id TEXT PRIMARY KEY,
+    payment_method TEXT NOT NULL DEFAULT 'manual',
+    payment_reference TEXT NOT NULL,
+    customer_note TEXT,
+    submitted_at TEXT NOT NULL,
+    FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE
   );
   CREATE TABLE IF NOT EXISTS subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL UNIQUE, plan_id INTEGER NOT NULL,
@@ -157,6 +171,10 @@ db.exec(`
     updated_at TEXT NOT NULL
   );
 `);
+
+try { db.exec("ALTER TABLE payment_submissions ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'manual'"); } catch (error) {
+  if (!String(error.message).includes("duplicate column name")) throw error;
+}
 
 try { db.exec("ALTER TABLE subscriptions ADD COLUMN source_id INTEGER"); } catch (error) {
   if (!String(error.message).includes("duplicate column name")) throw error;
@@ -527,11 +545,19 @@ function encryptedSetting(key, fallback = "") {
 function currentPaymentConfig() {
   const storedMode = storedSetting("payment_mode");
   const mode = ["mock", "manual", "webhook"].includes(storedMode) ? storedMode : paymentModeDefault;
+  let methodIds = ["wechat_pay", "alipay", "card"];
+  try {
+    const storedMethods = JSON.parse(storedSetting("payment_method_ids"));
+    if (Array.isArray(storedMethods)) methodIds = storedMethods;
+  } catch { /* Use the customer-friendly defaults until an admin customizes them. */ }
   return {
     mode,
     webhookSecret: encryptedSetting("payment_webhook_secret_encrypted", paymentWebhookSecretDefault),
     checkoutTemplate: encryptedSetting("payment_checkout_template_encrypted", paymentCheckoutTemplateDefault),
     manualInstructions: encryptedSetting("payment_manual_instructions_encrypted", paymentManualInstructionsDefault).slice(0, 2000),
+    methods: paymentMethodCatalog.filter((method) => methodIds.includes(method.id)).length
+      ? paymentMethodCatalog.filter((method) => methodIds.includes(method.id))
+      : paymentMethodCatalog.filter((method) => ["wechat_pay", "alipay", "card"].includes(method.id)),
   };
 }
 
@@ -1380,7 +1406,7 @@ app.put("/api/admin/settings/email", adminAuth, (req, res, next) => {
 
 app.get("/api/admin/settings/payment", adminAuth, (_req, res) => {
   const payment = currentPaymentConfig();
-  res.json({ mode: payment.mode, checkoutTemplate: payment.checkoutTemplate, manualInstructions: payment.manualInstructions, checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret), manualInstructionsConfigured: Boolean(payment.manualInstructions) });
+  res.json({ mode: payment.mode, checkoutTemplate: payment.checkoutTemplate, manualInstructions: payment.manualInstructions, methods: payment.methods, checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret), manualInstructionsConfigured: Boolean(payment.manualInstructions) });
 });
 
 app.put("/api/admin/settings/payment", adminAuth, (req, res, next) => {
@@ -1393,7 +1419,11 @@ app.put("/api/admin/settings/payment", adminAuth, (req, res, next) => {
     const webhookSecret = hasSecret ? String(req.body.webhookSecret || "").trim() : current.webhookSecret;
     const manualInstructions = Object.prototype.hasOwnProperty.call(req.body || {}, "manualInstructions")
       ? String(req.body.manualInstructions || "").trim().slice(0, 2000) : current.manualInstructions;
+    const methodIds = Array.isArray(req.body?.methodIds)
+      ? [...new Set(req.body.methodIds.map((value) => String(value)).filter((value) => paymentMethodCatalog.some((method) => method.id === value)))].slice(0, paymentMethodCatalog.length)
+      : current.methods.map((method) => method.id);
     if (!["mock", "manual", "webhook"].includes(mode)) throw apiError("INVALID_PAYMENT_MODE", "Payment mode must be mock, manual or webhook");
+    if (!methodIds.length) throw apiError("PAYMENT_METHOD_REQUIRED", "Select at least one payment method");
     if (checkoutTemplate && !validCheckoutTemplate(checkoutTemplate)) {
       throw apiError("INVALID_CHECKOUT_URL", "Checkout URL template must be a valid http or https URL");
     }
@@ -1408,9 +1438,11 @@ app.put("/api/admin/settings/payment", adminAuth, (req, res, next) => {
       if (req.body?.clearWebhookSecret) db.prepare("DELETE FROM settings WHERE key = 'payment_webhook_secret_encrypted'").run();
       else if (hasSecret) db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES ('payment_webhook_secret_encrypted', ?, ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(encrypt(webhookSecret), timestamp);
+      db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES ('payment_method_ids', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(JSON.stringify(methodIds), timestamp);
     })();
     const saved = currentPaymentConfig();
-    res.json({ ok: true, mode: saved.mode, ready: paymentIsReady(saved), checkoutConfigured: Boolean(saved.checkoutTemplate), webhookConfigured: Boolean(saved.webhookSecret), manualInstructionsConfigured: Boolean(saved.manualInstructions) });
+    res.json({ ok: true, mode: saved.mode, methods: saved.methods, ready: paymentIsReady(saved), checkoutConfigured: Boolean(saved.checkoutTemplate), webhookConfigured: Boolean(saved.webhookSecret), manualInstructionsConfigured: Boolean(saved.manualInstructions) });
   } catch (error) { next(error); }
 });
 
@@ -1717,12 +1749,14 @@ app.get("/api/admin/orders", adminAuth, (req, res) => {
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const total = db.prepare(`SELECT COUNT(*) AS count FROM orders o JOIN users u ON u.id = o.user_id ${where}`).get(...params).count;
   const orders = db.prepare(`SELECT o.id, o.amount, o.status, o.kind, o.discount_percent, o.expires_at, o.created_at, o.confirmed_at,
-    u.email, u.name, p.name AS plan_name FROM orders o
+    u.email, u.name, p.name AS plan_name, ps.payment_method, ps.payment_reference, ps.customer_note, ps.submitted_at FROM orders o
     JOIN users u ON u.id = o.user_id JOIN plans p ON p.id = o.plan_id
+    LEFT JOIN payment_submissions ps ON ps.order_id = o.id
     ${where} ORDER BY o.created_at DESC LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize).map((order) => ({
       id: order.id, amount: order.amount, status: order.status, kind: order.kind, discountPercent: order.discount_percent, expiresAt: order.expires_at,
       user: { name: order.name, email: order.email }, planName: order.plan_name,
       createdAt: order.created_at, confirmedAt: order.confirmed_at,
+      paymentSubmission: order.submitted_at ? { method: order.payment_method, reference: order.payment_reference, note: order.customer_note || "", submittedAt: order.submitted_at } : null,
     }));
   res.json({ orders, pagination: { page, pageSize, total, pages: Math.ceil(total / pageSize), query: q, status } });
 });
@@ -2180,7 +2214,7 @@ app.get("/api/config", (_req, res) => {
 
 app.get("/api/payment/config", auth, (_req, res) => {
   const payment = currentPaymentConfig();
-  res.json({ mode: payment.mode, mock: payment.mode === "mock", manual: payment.mode === "manual", webhook: payment.mode === "webhook", ready: paymentIsReady(payment), checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret), manualInstructions: payment.mode === "manual" ? payment.manualInstructions : "" });
+  res.json({ mode: payment.mode, mock: payment.mode === "mock", manual: payment.mode === "manual", webhook: payment.mode === "webhook", ready: paymentIsReady(payment), checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret), manualInstructions: payment.mode === "manual" ? payment.manualInstructions : "", methods: payment.methods });
 });
 
 function customerOrderView(order) {
@@ -2286,10 +2320,12 @@ app.post("/api/orders", auth, (req, res, next) => {
 app.get("/api/orders", auth, (req, res) => {
   expirePendingOrders();
   const orders = db.prepare(`SELECT o.id, o.amount, o.status, o.kind, o.discount_percent, o.expires_at, o.created_at, o.confirmed_at,
-    p.name AS plan_name FROM orders o JOIN plans p ON p.id = o.plan_id
+    p.name AS plan_name, ps.payment_method, ps.payment_reference, ps.customer_note, ps.submitted_at
+    FROM orders o JOIN plans p ON p.id = o.plan_id LEFT JOIN payment_submissions ps ON ps.order_id = o.id
     WHERE o.user_id = ? ORDER BY o.created_at DESC`).all(req.user.id).map((order) => ({
       id: order.id, amount: order.amount, status: order.status, kind: order.kind, discountPercent: order.discount_percent, expiresAt: order.expires_at, checkoutUrl: checkoutUrlFor(order), planName: order.plan_name,
       createdAt: order.created_at, confirmedAt: order.confirmed_at,
+      paymentSubmission: order.submitted_at ? { method: order.payment_method, reference: order.payment_reference, note: order.customer_note || "", submittedAt: order.submitted_at } : null,
     }));
   res.json({ orders });
 });
@@ -2298,7 +2334,8 @@ app.get("/api/orders/:id", auth, (req, res, next) => {
   try {
     expirePendingOrders();
     const order = db.prepare(`SELECT o.id, o.amount, o.status, o.kind, o.discount_percent, o.expires_at, o.created_at, o.confirmed_at,
-      p.name AS plan_name FROM orders o JOIN plans p ON p.id = o.plan_id
+      p.name AS plan_name, ps.payment_method, ps.payment_reference, ps.customer_note, ps.submitted_at
+      FROM orders o JOIN plans p ON p.id = o.plan_id LEFT JOIN payment_submissions ps ON ps.order_id = o.id
       WHERE o.id = ? AND o.user_id = ?`).get(req.params.id, req.user.id);
     if (!order) throw apiError("ORDER_NOT_FOUND", "Order was not found", 404);
     res.json({ order: {
@@ -2306,7 +2343,30 @@ app.get("/api/orders/:id", auth, (req, res, next) => {
       discountPercent: order.discount_percent, expiresAt: order.expires_at,
       checkoutUrl: checkoutUrlFor(order), planName: order.plan_name,
       createdAt: order.created_at, confirmedAt: order.confirmed_at,
+      paymentSubmission: order.submitted_at ? { method: order.payment_method, reference: order.payment_reference, note: order.customer_note || "", submittedAt: order.submitted_at } : null,
     } });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/orders/:id/payment-submission", auth, (req, res, next) => {
+  try {
+    const payment = currentPaymentConfig();
+    if (payment.mode !== "manual") throw apiError("PAYMENT_SUBMISSION_NOT_AVAILABLE", "Payment references are only used for manual payment", 409);
+    const order = db.prepare("SELECT id, status FROM orders WHERE id = ? AND user_id = ?").get(req.params.id, req.user.id);
+    if (!order) throw apiError("ORDER_NOT_FOUND", "Order was not found", 404);
+    if (order.status !== "pending") throw apiError("ORDER_NOT_SUBMITTABLE", "Only pending orders can submit payment information", 409);
+    const method = String(req.body?.method || "").trim();
+    const reference = String(req.body?.reference || "").trim().slice(0, 160);
+    const note = String(req.body?.note || "").trim().slice(0, 500);
+    if (!payment.methods.some((item) => item.id === method)) throw apiError("INVALID_PAYMENT_METHOD", "Select an available payment method");
+    if (reference.length < 3) throw apiError("INVALID_PAYMENT_REFERENCE", "Enter a payment reference or transfer number");
+    const submittedAt = now();
+    db.prepare(`INSERT INTO payment_submissions (order_id, payment_method, payment_reference, customer_note, submitted_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(order_id) DO UPDATE SET payment_method = excluded.payment_method,
+        payment_reference = excluded.payment_reference, customer_note = excluded.customer_note, submitted_at = excluded.submitted_at`)
+      .run(order.id, method, reference, note || null, submittedAt);
+    res.json({ ok: true, orderId: order.id, paymentSubmission: { method, reference, note, submittedAt } });
   } catch (error) { next(error); }
 });
 
