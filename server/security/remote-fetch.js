@@ -48,7 +48,9 @@ function parseAndValidateUrl(input, { allowPrivate = false } = {}) {
   if (["metadata", "metadata.google.internal", "instance-data"].includes(parsed.hostname.toLowerCase())) {
     throw new RemoteFetchError("PRIVATE_REMOTE_URL_BLOCKED", "Metadata service hostnames are not allowed");
   }
-  if (!allowPrivate && isPrivateAddress(parsed.hostname)) throw new RemoteFetchError("PRIVATE_REMOTE_URL_BLOCKED", "Private or local upstream URLs are disabled");
+  if (!allowPrivate && net.isIP(parsed.hostname) && isPrivateAddress(parsed.hostname)) {
+    throw new RemoteFetchError("PRIVATE_REMOTE_URL_BLOCKED", "Private or local upstream URLs are disabled");
+  }
   return parsed;
 }
 

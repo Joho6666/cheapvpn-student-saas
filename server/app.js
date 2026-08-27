@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { createDatabase } from "./db/database.js";
 import {
   adminPassword, allowDemoAccount, allowDemoSubscription, allowPrivateUpstreamUrls,
-  config, configuredCorsOrigins, dataDir, emailFromDefault, host, nodeGeoTimeout,
+  configuredCorsOrigins, dataDir, emailFromDefault, host, nodeGeoTimeout,
   nodeProbeTimeout, nodeTestConcurrency, paymentCheckoutTemplateDefault,
   paymentManualInstructionsDefault, paymentMethodCatalog, paymentModeDefault,
   paymentWebhookSecretDefault, port, productionRuntime, publicBaseUrl,

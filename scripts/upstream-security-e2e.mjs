@@ -12,6 +12,7 @@ const port = server.address().port;
 try {
   assert.throws(() => validateRemoteUrl("file:///etc/passwd"), /http|https/i);
   assert.throws(() => validateRemoteUrl("http://user:pass@example.com"), /credentials/i);
+  assert.doesNotThrow(() => validateRemoteUrl("https://example.com/subscription"));
   await assert.rejects(() => safeRemoteFetch(`http://127.0.0.1:${port}/content`), (error) => error.code === "PRIVATE_REMOTE_URL_BLOCKED");
   const response = await safeRemoteFetch(`http://127.0.0.1:${port}/redirect`, { allowPrivate: true });
   assert.equal(response.ok, true);
