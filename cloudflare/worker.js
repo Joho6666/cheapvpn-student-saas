@@ -279,7 +279,14 @@ async function syncSubscription(subscription, env) {
     const universalUrl = await decrypt(source.universal_url_encrypted || source.url_encrypted, env);
     const clashUrl = source.clash_url_encrypted ? await decrypt(source.clash_url_encrypted, env) : universalUrl;
     const singboxUrl = source.singbox_url_encrypted ? await decrypt(source.singbox_url_encrypted, env) : universalUrl;
-    const [universal, clash, singbox] = await Promise.all([fetchText(universalUrl), fetchText(clashUrl), fetchText(singboxUrl)]);
+    const universal = await fetchText(universalUrl);
+    const [rawClash, rawSingbox] = await Promise.all([
+      source.clash_url_encrypted ? fetchText(clashUrl) : Promise.resolve(universal),
+      source.singbox_url_encrypted ? fetchText(singboxUrl) : Promise.resolve(universal),
+    ]);
+    const clash = formatLooksUsable(rawClash, "clash") ? rawClash : convertUniversalToClash(universal);
+    const singbox = formatLooksUsable(rawSingbox, "singbox") ? rawSingbox : convertUniversalToSingBox(universal);
+    if (!formatLooksUsable(universal, "universal") || !formatLooksUsable(clash, "clash") || !formatLooksUsable(singbox, "singbox")) throw new Error("Upstream subscription format could not be converted for clients");
     await env.DB.prepare("UPDATE subscriptions SET source_id = ?, universal_content = ?, clash_content = ?, singbox_content = ?, last_sync_at = ?, last_sync_status = 'ok', last_sync_error = NULL, updated_at = ? WHERE id = ?").bind(source.id, universal, clash, singbox, timestamp, timestamp, subscription.id).run();
     await env.DB.prepare("UPDATE upstream_sources SET last_sync_at = ?, last_sync_status = 'ok', last_sync_error = NULL, updated_at = ? WHERE id = ?").bind(timestamp, timestamp, source.id).run();
   } catch (error) {
@@ -464,7 +471,8 @@ function decodeSubscriptionText(content) {
   const compact = String(content || "").trim().replace(/\s+/g, "");
   if (!compact || !/^[A-Za-z0-9+/_=-]+$/.test(compact)) return String(content || "");
   try {
-    const decoded = decoder.decode(Uint8Array.from(atob(compact.replace(/-/g, "+").replace(/_/g, "/") + "==="), (char) => char.charCodeAt(0)));
+    const normalized = compact.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(compact.length / 4) * 4, "=");
+    const decoded = decoder.decode(Uint8Array.from(atob(normalized), (char) => char.charCodeAt(0)));
     return /(?:^|\n)(?:vless|vmess|trojan|ss|ssr|hysteria|hysteria2|tuic|wireguard):\/\//im.test(decoded) ? decoded : String(content || "");
   } catch { return String(content || ""); }
 }
@@ -485,6 +493,121 @@ function formatLooksUsable(content, format) {
     try { JSON.parse(value); return true; } catch { return false; }
   }
   return /proxies\s*:|proxy-groups\s*:|server\s*:/i.test(value);
+}
+
+function decodeBase64Text(value) {
+  try {
+    const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(String(value || "").length / 4) * 4, "=");
+    return decoder.decode(Uint8Array.from(atob(normalized), (char) => char.charCodeAt(0)));
+  } catch { return ""; }
+}
+
+function universalLines(content) {
+  const raw = String(content || "").trim();
+  if (!raw) return [];
+  const decoded = decodeSubscriptionText(raw);
+  return decoded.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function nodeNameFromUri(uri, fallback) {
+  const hash = uri.indexOf("#");
+  if (hash < 0) return fallback;
+  try { return decodeURIComponent(uri.slice(hash + 1)) || fallback; } catch { return uri.slice(hash + 1) || fallback; }
+}
+
+function parseUniversalNodeConfigs(content) {
+  const supported = /^(?:vless|vmess|trojan|ss|ssr|hysteria|hysteria2|tuic|wireguard):\/\//i;
+  const decodeEndpointBase64 = (value) => decodeBase64Text(value);
+  const parseEndpoint = (line) => {
+    const protocol = line.slice(0, line.indexOf(":")).toLowerCase();
+    if (protocol === "vmess") {
+      try {
+        const config = JSON.parse(decodeEndpointBase64(line.slice("vmess://".length)));
+        return { host: String(config.add || config.address || ""), port: Number(config.port || 443), vmess: config };
+      } catch { return null; }
+    }
+    if (protocol === "ss") {
+      const encoded = line.slice("ss://".length).split("#", 1)[0];
+      const decodedPart = encoded.includes("@") ? encoded : decodeEndpointBase64(encoded);
+      const at = decodedPart.lastIndexOf("@");
+      const endpoint = at >= 0 ? decodedPart.slice(at + 1) : decodedPart;
+      const match = endpoint.match(/^\[?([^\]]+)\]?(?::(\d+))?$/);
+      if (match) return { host: match[1], port: Number(match[2] || 443), ss: at >= 0 ? decodedPart.slice(0, at) : "" };
+    }
+    try {
+      const url = new URL(line);
+      if (url.hostname) return { host: url.hostname, port: Number(url.port || 443), url };
+    } catch { return null; }
+    return null;
+  };
+  return universalLines(content).map((line, index) => {
+    const trimmed = line.trim();
+    if (!supported.test(trimmed)) return null;
+    const endpoint = parseEndpoint(trimmed);
+    if (!endpoint?.host || !Number.isFinite(endpoint.port)) return null;
+    const name = nodeNameFromUri(trimmed, `Node ${index + 1}`);
+    const protocol = trimmed.slice(0, trimmed.indexOf(":")).toLowerCase();
+    if (protocol === "vmess") {
+      const config = endpoint.vmess || {};
+      return { name, type: "vmess", server: endpoint.host, port: endpoint.port, uuid: config.id || "", alterId: Number(config.aid || 0), cipher: "auto", network: config.net || "tcp", path: config.path || "", hostHeader: config.host || "", tls: String(config.tls || "").toLowerCase() === "tls", sni: config.sni || config.host || endpoint.host };
+    }
+    if (protocol === "ss") {
+      const userInfo = endpoint.ss || "";
+      const separator = userInfo.indexOf(":");
+      return { name, type: "ss", server: endpoint.host, port: endpoint.port, cipher: separator >= 0 ? userInfo.slice(0, separator) : "aes-128-gcm", password: separator >= 0 ? userInfo.slice(separator + 1) : userInfo };
+    }
+    const url = endpoint.url;
+    if (!url) return null;
+    const network = url.searchParams.get("type") || url.searchParams.get("network") || "tcp";
+    const tls = url.searchParams.get("security") === "tls" || protocol === "trojan" || url.searchParams.get("tls") === "1";
+    const common = { name, server: endpoint.host, port: endpoint.port, network, path: url.searchParams.get("path") || "", hostHeader: url.searchParams.get("host") || "", tls, sni: url.searchParams.get("sni") || url.searchParams.get("peer") || endpoint.host };
+    const user = decodeURIComponent(url.username || "");
+    if (protocol === "vless") return { ...common, type: "vless", uuid: user };
+    if (protocol === "trojan") return { ...common, type: "trojan", password: user };
+    if (protocol === "hysteria2") return { ...common, type: "hysteria2", password: user || decodeURIComponent(url.password || "") };
+    return null;
+  }).filter(Boolean).slice(0, 100);
+}
+
+function convertUniversalToClash(content) {
+  const nodes = parseUniversalNodeConfigs(content);
+  if (!nodes.length) return "";
+  const quote = (value) => JSON.stringify(String(value ?? ""));
+  const lines = ["proxies:"];
+  const names = [];
+  nodes.forEach((node) => {
+    names.push(node.name);
+    lines.push(`  - name: ${quote(node.name)}`, `    type: ${node.type}`, `    server: ${quote(node.server)}`, `    port: ${node.port}`);
+    if (node.type === "vmess") lines.push(`    uuid: ${quote(node.uuid)}`, `    alterId: ${node.alterId}`, `    cipher: ${node.cipher}`, `    tls: ${Boolean(node.tls)}`);
+    if (node.type === "vless") lines.push(`    uuid: ${quote(node.uuid)}`, `    tls: ${Boolean(node.tls)}`);
+    if (node.type === "trojan" || node.type === "hysteria2") lines.push(`    password: ${quote(node.password)}`, "    tls: true");
+    if (node.type === "ss") lines.push(`    cipher: ${quote(node.cipher)}`, `    password: ${quote(node.password)}`);
+    if (node.sni && node.tls) lines.push(`    servername: ${quote(node.sni)}`);
+    if (node.network === "ws") {
+      lines.push("    network: ws", "    ws-opts:", `      path: ${quote(node.path || "/")}`);
+      if (node.hostHeader) lines.push("      headers:", `        Host: ${quote(node.hostHeader)}`);
+    }
+  });
+  lines.push("proxy-groups:", "  - name: CheapVPN", "    type: select", "    proxies:");
+  names.forEach((name) => lines.push(`      - ${quote(name)}`));
+  lines.push("      - DIRECT", "rules:", "  - MATCH,CheapVPN");
+  return `${lines.join("\n")}\n`;
+}
+
+function convertUniversalToSingBox(content) {
+  const nodes = parseUniversalNodeConfigs(content);
+  if (!nodes.length) return "";
+  const outbounds = nodes.map((node) => {
+    const result = { type: node.type, tag: node.name, server: node.server, server_port: node.port };
+    if (node.type === "vmess" || node.type === "vless") result.uuid = node.uuid;
+    if (node.type === "vmess") { result.alter_id = node.alterId; result.security = node.cipher; }
+    if (node.type === "trojan" || node.type === "hysteria2") result.password = node.password;
+    if (node.type === "ss") { result.method = node.cipher; result.password = node.password; }
+    if (node.tls) result.tls = { enabled: true, server_name: node.sni || node.server };
+    if (node.network === "ws") result.transport = { type: "ws", path: node.path || "/", headers: node.hostHeader ? { Host: node.hostHeader } : undefined };
+    return result;
+  });
+  return JSON.stringify({ outbounds }, null, 2);
 }
 
 async function sourceUrls(source, env) {
@@ -837,10 +960,14 @@ async function adminRoutes(request, env, path) {
     const source = await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(Number(sourceMatch[1])).first();
     if (!source) return failure("SOURCE_NOT_FOUND", "Source not found", 404);
     const urls = await sourceUrls(source, env);
+    let universalContent = "";
+    try { universalContent = await fetchText(urls.universal); } catch (error) { return json({ source: source.name, ok: false, passed: 0, total: 3, formats: [{ format: "universal", ok: false, nodes: null, error: String(error.message || error) }] }); }
     const formats = await Promise.all(Object.entries(urls).map(async ([format, url]) => {
       try {
-        const content = await fetchText(url);
-        return { format, ok: formatLooksUsable(content, format), nodes: format === "universal" ? parseUniversalNodes(content).length : null };
+        const explicit = format === "clash" ? Boolean(source.clash_url_encrypted) : format === "singbox" ? Boolean(source.singbox_url_encrypted) : true;
+        const raw = format === "universal" ? universalContent : explicit ? await fetchText(url) : universalContent;
+        const content = format === "clash" && !formatLooksUsable(raw, format) ? convertUniversalToClash(universalContent) : format === "singbox" && !formatLooksUsable(raw, format) ? convertUniversalToSingBox(universalContent) : raw;
+        return { format, ok: formatLooksUsable(content, format), converted: content !== raw, nodes: format === "universal" ? parseUniversalNodes(content).length : null };
       } catch (error) { return { format, ok: false, nodes: null, error: String(error.message || error) }; }
     }));
     const universal = formats.find((format) => format.format === "universal");
@@ -1007,7 +1134,11 @@ async function servePublicSubscription(request, env, path) {
   if (!subscription) return withSecurityHeaders(new Response("Subscription not found or expired", { status: 404 }));
   const format = match[1] === "clash" ? "clash_content" : match[1] === "singbox" ? "singbox_content" : "universal_content";
   const contentType = format === "clash_content" ? "text/yaml; charset=utf-8" : format === "singbox_content" ? "application/json; charset=utf-8" : "text/plain; charset=utf-8";
-  return withSecurityHeaders(new Response(subscription[format] || "", { headers: { "content-type": contentType, "cache-control": "no-store" } }));
+  let content = subscription[format] || "";
+  if (format === "clash_content" && !formatLooksUsable(content, "clash")) content = convertUniversalToClash(subscription.universal_content);
+  if (format === "singbox_content" && !formatLooksUsable(content, "singbox")) content = convertUniversalToSingBox(subscription.universal_content);
+  if (!content || (format !== "universal_content" && !formatLooksUsable(content, format === "clash_content" ? "clash" : "singbox"))) return withSecurityHeaders(new Response("Subscription format unavailable", { status: 502 }));
+  return withSecurityHeaders(new Response(content, { headers: { "content-type": contentType, "cache-control": "no-store" } }));
 }
 
 export default {
