@@ -119,7 +119,7 @@ const fromBase64url = (value) => Uint8Array.from(atob(String(value).replace(/-/g
 const randomToken = (prefix = "") => { const bytes = crypto.getRandomValues(new Uint8Array(24)); return `${prefix}${base64url(bytes)}`; };
 const safeUser = (user) => ({ id: user.id, email: user.email, name: user.name, referralCode: user.referral_code, createdAt: user.created_at });
 const publicBase = (request, env) => String(env.PUBLIC_BASE_URL || new URL(request.url).origin).replace(/\/$/, "");
-const planView = (plan) => ({ id: plan.id, slug: plan.slug, name: plan.name, firstMonth: Number(plan.first_month_price), renewal: Number(plan.renewal_price), dataTotal: Number(plan.data_total_gb), devices: Number(plan.device_limit), periodMonths: Number(plan.billing_period_months || 1), active: Boolean(plan.active) });
+const planView = (plan) => ({ id: plan.id, slug: plan.slug, name: plan.name || plan.plan_name || "", firstMonth: Number(plan.first_month_price), renewal: Number(plan.renewal_price), dataTotal: Number(plan.data_total_gb), devices: Number(plan.device_limit), periodMonths: Number(plan.billing_period_months || 1), active: Boolean(plan.active) });
 
 async function digest(value) {
   return base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))));
@@ -251,7 +251,8 @@ async function subscriptionForUser(userId, env) {
 
 function subscriptionView(subscription, request, env) {
   if (!subscription) return null;
-  return { id: subscription.id, status: subscription.status, expiresAt: subscription.expires_at, dataTotalGb: Number(subscription.data_total_gb), dataUsedGb: Number(subscription.upstream_used_gb ?? subscription.data_used_gb), deviceLimit: subscription.device_limit, lastSyncAt: subscription.last_sync_at, lastSyncStatus: subscription.last_sync_status, plan: planView(subscription), links: subLinks(subscription, request, env) };
+  const token = String(subscription.token || "");
+  return { id: subscription.id, status: subscription.status, token: token ? `${token.slice(0, 12)}****${token.slice(-4)}` : "-", expiresAt: subscription.expires_at, dataTotalGb: Number(subscription.data_total_gb), dataUsedGb: Number(subscription.upstream_used_gb ?? subscription.data_used_gb), deviceLimit: subscription.device_limit, lastSyncAt: subscription.last_sync_at, lastSyncStatus: subscription.last_sync_status, plan: planView(subscription), links: subscription.status === "active" ? subLinks(subscription, request, env) : null };
 }
 
 function maskUrl(value) { try { const url = new URL(value); return `${url.origin}${url.pathname.slice(0, 22)}...`; } catch { return "Configured"; } }
@@ -741,7 +742,8 @@ async function userRoutes(request, env, path) {
     const subscription = await subscriptionForUser(auth.user.id, env);
     if (!subscription) return failure("SUBSCRIPTION_NOT_FOUND", "No active subscription found", 404);
     const used = Number(subscription.upstream_used_gb ?? subscription.data_used_gb); const total = Number(subscription.upstream_total_gb ?? subscription.data_total_gb);
-    return json({ totalGb: total, usedGb: used, remainingGb: Math.max(0, total - used), deviceLimit: subscription.device_limit, expiresAt: subscription.expires_at, status: subscription.status });
+    const remaining = Math.max(0, total - used);
+    return json({ used, total, remaining, quotaEnforced: true, devices: subscription.device_limit, expiresAt: subscription.expires_at, usageSource: subscription.usage_source || "manual", upstream: subscription.upstream_total_gb === null || subscription.upstream_total_gb === undefined ? null : { used: Number(subscription.upstream_used_gb || 0), total: Number(subscription.upstream_total_gb), expiresAt: subscription.upstream_expires_at, syncedAt: subscription.upstream_synced_at }, totalGb: total, usedGb: used, remainingGb: remaining, deviceLimit: subscription.device_limit, status: subscription.status });
   }
   if (request.method === "GET" && path === "/api/usage/history") return json({ history: await usageHistory(auth.user.id, env) });
   if (request.method === "PATCH" && path === "/api/me/profile") {
