@@ -148,14 +148,11 @@ function expirationMillis(value) {
   return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
 }
 
-function addCalendarMonths(value, months) {
-  const date = new Date(value);
-  const originalDay = date.getDate();
-  date.setDate(1);
-  date.setMonth(date.getMonth() + Number(months || 0));
-  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  date.setDate(Math.min(originalDay, lastDay));
-  return date;
+function addBillingPeriods(value, periods) {
+  // CheapVPN billing periods are fixed 30-day cycles in both deployments.
+  // This keeps Docker/SQLite and Cloudflare/D1 expiry behavior identical.
+  const days = Number(periods || 0) * 30;
+  return new Date(new Date(value).getTime() + days * 24 * 60 * 60 * 1000);
 }
 
 function expireSubscriptions() {
@@ -1614,7 +1611,7 @@ app.patch("/api/admin/users/:id/subscription", adminAuth, (req, res, next) => {
       const requestedMonths = req.body?.months === undefined ? subscription.billing_period_months : Number(req.body.months);
       const months = Math.min(24, Math.max(1, Number(requestedMonths) || 1));
       const base = new Date(Math.max(Date.now(), expirationMillis(subscription.expires_at)));
-      const extended = addCalendarMonths(base, months);
+      const extended = addBillingPeriods(base, months);
       // An administrator extension starts a fresh cycle. This also revives
       // quota- or upstream-expired accounts instead of immediately expiring
       // them again because of stale usage fields.
@@ -2139,7 +2136,7 @@ async function completeOrder(order, baseUrl = publicBaseUrl) {
     const existingExpiry = existingSubscription ? expirationMillis(existingSubscription.expires_at) : 0;
     expiresAt.setTime(Math.max(Date.now(), existingExpiry));
   }
-  expiresAt.setTime(addCalendarMonths(expiresAt, Number(plan.billing_period_months || 1)).getTime());
+  expiresAt.setTime(addBillingPeriods(expiresAt, Number(plan.billing_period_months || 1)).getTime());
   // Renewals stay on the customer's assigned source; new subscriptions follow the configured assignment mode.
   const assignedRenewalSource = order.kind === "renewal" && existingSubscription?.source_id ? sourceById(existingSubscription.source_id) : null;
   const selectedSource = order.kind === "renewal" && existingSubscription?.source_id

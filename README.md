@@ -55,6 +55,7 @@ The Vite server proxies `/api` and `/s` to port 4000. The SQLite database is cre
 
 The subscription page generates the import QR code locally from the CheapVPN subscription URL, so the URL is not sent to an external QR service. Copy buttons remain available for clients that prefer manual import.
 The setup page selects a matching format per device: iPhone/iPad uses the universal subscription for Shadowrocket, while Windows, macOS, and Android use the Clash subscription by default. All three formats remain available from the subscription page.
+Subscription billing periods use fixed 30-day cycles. The API, public subscription links, scheduled expiry job, and administrator views all enforce the subscription `expires_at` timestamp; this is time-based expiry only and does not imply that cached upstream node credentials are revoked.
 
 Demo subscription content is disabled by default. Set `ALLOW_DEMO_SUBSCRIPTION=true` only for isolated local demonstrations; production customers must have a configured upstream source before an order can activate.
 Demo account access is controlled separately by `ALLOW_DEMO_ACCOUNT`; it is enabled only in the local development `.env` and must remain `false` in production.
