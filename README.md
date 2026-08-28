@@ -84,7 +84,7 @@ The admin customer endpoint supports `GET /api/admin/users?q=name-or-email&page=
 
 Run `npm run build`, then `npm start`. The API server serves the built frontend and API from the same port. Set `PUBLIC_BASE_URL` to that public HTTPS origin before issuing subscriptions.
 
-See [docs/architecture.md](docs/architecture.md), [docs/provider-api.md](docs/provider-api.md), [docs/security.md](docs/security.md), [docs/deployment.md](docs/deployment.md), and [docs/backend-parity.md](docs/backend-parity.md) for the V1.0 boundaries and launch checklist. Historical design exports are under `docs/design-history/`; the two root release archives remain for compatibility and should move to GitHub Releases in a later cleanup.
+See [docs/architecture.md](docs/architecture.md), [docs/provider-api.md](docs/provider-api.md), [docs/security.md](docs/security.md), [docs/deployment.md](docs/deployment.md), [docs/resource-pools.md](docs/resource-pools.md), and [docs/backend-parity.md](docs/backend-parity.md) for the V1.0 boundaries and launch checklist. Historical design exports are under `docs/design-history/`; the two root release archives remain for compatibility and should move to GitHub Releases in a later cleanup.
 
 ## Public deployment with Docker
 

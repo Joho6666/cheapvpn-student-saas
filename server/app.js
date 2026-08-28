@@ -484,10 +484,13 @@ function ensureEnabledDefaultSource() {
 
 function invalidateSourceSubscriptions(sourceId) {
   if (!sourceId) return;
-  const boundSubscriptions = db.prepare("SELECT id FROM subscriptions WHERE source_id = ? AND status = 'active'").all(sourceId);
+  const boundSubscriptions = db.prepare(`SELECT DISTINCT s.id FROM subscriptions s
+    LEFT JOIN subscription_source_assignments a ON a.subscription_id = s.id
+    WHERE s.status = 'active' AND (s.source_id = ? OR a.source_id = ?)`).all(sourceId, sourceId);
   boundSubscriptions.forEach(({ id }) => subscriptionSyncPromises.delete(id));
-  db.prepare(`UPDATE subscriptions SET last_sync_at = NULL, last_sync_status = 'pending',
-    last_sync_error = NULL, updated_at = ? WHERE source_id = ? AND status = 'active'`).run(now(), sourceId);
+  const timestamp = now();
+  const invalidate = db.prepare("UPDATE subscriptions SET last_sync_at = NULL, last_sync_status = 'pending', last_sync_error = NULL, updated_at = ? WHERE id = ?");
+  db.transaction(() => boundSubscriptions.forEach(({ id }) => invalidate.run(timestamp, id)))();
 }
 
 function defaultSource() {
@@ -866,6 +869,7 @@ function migrateLegacySource() {
 }
 
 migrateLegacySource();
+migrateResourcePools();
 
 function demoContent() {
   return "# CheapVPN demo subscription\n# Configure UPSTREAM_SUBSCRIPTION_URL for a real server-side source.\n";
@@ -907,6 +911,88 @@ async function fetchUpstream(sourceId, format = "universal") {
     logEvent("upstream.fetch", { sourceId: selectedSource?.id || null, format, code: error.code || "UPSTREAM_FETCH_FAILED", success: false }, "warn");
     throw error;
   }
+}
+
+function defaultPool() {
+  return db.prepare("SELECT * FROM upstream_pools WHERE enabled = 1 ORDER BY is_default DESC, id ASC LIMIT 1").get();
+}
+
+function poolById(poolId) {
+  return poolId ? db.prepare("SELECT * FROM upstream_pools WHERE id = ?").get(Number(poolId)) : null;
+}
+
+function poolMembers(poolId, { onlyHealthyCandidates = false } = {}) {
+  if (!poolId) return [];
+  const enabledClause = onlyHealthyCandidates ? "AND pm.enabled = 1 AND s.enabled = 1" : "";
+  return db.prepare(`SELECT s.*, pm.enabled AS pool_member_enabled, pm.priority AS pool_priority
+    FROM upstream_pool_members pm JOIN upstream_sources s ON s.id = pm.source_id
+    WHERE pm.pool_id = ? ${enabledClause} ORDER BY pm.priority ASC, s.id ASC`).all(Number(poolId));
+}
+
+function poolView(pool, { includeMembers = true } = {}) {
+  const members = includeMembers ? poolMembers(pool.id).map((source) => ({
+    id: source.id, name: source.name, enabled: Boolean(source.enabled && source.pool_member_enabled),
+    sourceEnabled: Boolean(source.enabled), priority: source.pool_priority,
+    lastSyncAt: source.last_sync_at || "-", lastSyncStatus: source.last_sync_status || "-",
+  })) : [];
+  return {
+    id: pool.id, name: pool.name, enabled: Boolean(pool.enabled), isDefault: Boolean(pool.is_default),
+    deliveryMode: pool.delivery_mode, memberCount: members.length, members,
+    createdAt: pool.created_at, updatedAt: pool.updated_at,
+  };
+}
+
+function ensureDefaultResourcePool() {
+  const timestamp = now();
+  let pool = defaultPool();
+  if (!pool) {
+    const inserted = db.prepare(`INSERT INTO upstream_pools (name, enabled, is_default, delivery_mode, created_at, updated_at)
+      VALUES ('默认资源池', 1, 1, 'merge_all', ?, ?)`).run(timestamp, timestamp);
+    pool = poolById(inserted.lastInsertRowid);
+  }
+  const sources = db.prepare("SELECT id FROM upstream_sources ORDER BY id ASC").all();
+  const attach = db.prepare(`INSERT OR IGNORE INTO upstream_pool_members
+    (pool_id, source_id, enabled, priority, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?)`);
+  const highestPriority = db.prepare("SELECT COALESCE(MAX(priority), -1) AS value FROM upstream_pool_members WHERE pool_id = ?").get(pool.id).value;
+  db.transaction(() => sources.forEach((source, index) => attach.run(pool.id, source.id, Number(highestPriority) + index + 1, timestamp, timestamp)))();
+  return poolById(pool.id);
+}
+
+function migrateResourcePools() {
+  const pool = ensureDefaultResourcePool();
+  const timestamp = now();
+  const subscriptions = db.prepare("SELECT id, source_id, pool_id FROM subscriptions").all();
+  const insertAssignment = db.prepare(`INSERT OR IGNORE INTO subscription_source_assignments
+    (subscription_id, source_id, state, created_at, updated_at) VALUES (?, ?, 'active', ?, ?)`);
+  const updatePool = db.prepare("UPDATE subscriptions SET pool_id = ? WHERE id = ? AND pool_id IS NULL");
+  db.transaction(() => subscriptions.forEach((subscription) => {
+    if (subscription.source_id) insertAssignment.run(subscription.id, subscription.source_id, timestamp, timestamp);
+    if (subscription.source_id && !subscription.pool_id) updatePool.run(pool.id, subscription.id);
+  }))();
+}
+
+function poolForNewSubscription() {
+  const pool = ensureDefaultResourcePool();
+  return pool?.enabled ? pool : null;
+}
+
+function assignedPoolSources(subscription) {
+  const assigned = db.prepare(`SELECT s.*, a.state AS assignment_state, a.last_sync_at AS assignment_last_sync_at,
+    a.last_sync_status AS assignment_last_sync_status, a.last_sync_error AS assignment_last_sync_error
+    FROM subscription_source_assignments a JOIN upstream_sources s ON s.id = a.source_id
+    WHERE a.subscription_id = ? ORDER BY s.id ASC`).all(subscription.id);
+  if (assigned.length) return assigned;
+  if (subscription.pool_id) return poolMembers(subscription.pool_id);
+  return subscription.source_id ? [sourceById(subscription.source_id)].filter(Boolean) : [];
+}
+
+function ensureSubscriptionSourceAssignments(subscriptionId, poolId, fallbackSourceId = null) {
+  const timestamp = now();
+  const sources = poolId ? poolMembers(poolId, { onlyHealthyCandidates: true }) : (fallbackSourceId ? [sourceById(fallbackSourceId)].filter(Boolean) : []);
+  const insert = db.prepare(`INSERT OR IGNORE INTO subscription_source_assignments
+    (subscription_id, source_id, state, created_at, updated_at) VALUES (?, ?, 'pending', ?, ?)`);
+  db.transaction(() => sources.forEach((source) => insert.run(subscriptionId, source.id, timestamp, timestamp)))();
+  return assignedPoolSources({ id: subscriptionId, pool_id: poolId, source_id: fallbackSourceId });
 }
 
 function validateUpstreamUrl(value) {
@@ -959,7 +1045,136 @@ async function fetchSubscriptionFormats(sourceId, previous = null) {
   };
 }
 
+function nodeFingerprint(line) {
+  const withoutName = String(line || "").trim().split("#", 1)[0];
+  if (!withoutName) return "";
+  if (/^vmess:\/\//i.test(withoutName)) {
+    try {
+      const config = JSON.parse(decodeUrlBase64(withoutName.slice("vmess://".length)));
+      return crypto.createHash("sha256").update(JSON.stringify({
+        type: "vmess", server: config.add || config.address, port: String(config.port || 443),
+        id: config.id, network: config.net || "tcp", host: config.host || "", path: config.path || "", tls: config.tls || "", sni: config.sni || "",
+      })).digest("hex");
+    } catch { /* Fall through to the opaque line hash. */ }
+  }
+  try {
+    const parsed = new URL(withoutName);
+    const query = [...parsed.searchParams.entries()].sort(([left], [right]) => left.localeCompare(right));
+    return crypto.createHash("sha256").update(JSON.stringify({
+      protocol: parsed.protocol.toLowerCase(), host: parsed.hostname.toLowerCase(), port: parsed.port || "443",
+      username: decodeURIComponent(parsed.username || ""), password: decodeURIComponent(parsed.password || ""), query,
+    })).digest("hex");
+  } catch {
+    return crypto.createHash("sha256").update(withoutName).digest("hex");
+  }
+}
+
+function mergeUniversalContents(contents) {
+  const lines = [];
+  const fingerprints = new Set();
+  let totalNodes = 0;
+  for (const content of contents) {
+    for (const line of universalLines(content)) {
+      totalNodes += 1;
+      const fingerprint = nodeFingerprint(line);
+      if (!fingerprint || fingerprints.has(fingerprint)) continue;
+      fingerprints.add(fingerprint);
+      lines.push(line);
+    }
+  }
+  return { content: lines.join("\n") + (lines.length ? "\n" : ""), totalNodes, uniqueNodes: lines.length };
+}
+
+function protocolCounts(content) {
+  const counts = {};
+  universalLines(content).forEach((line) => {
+    const protocol = String(line).split(":", 1)[0].toLowerCase() || "unknown";
+    counts[protocol] = (counts[protocol] || 0) + 1;
+  });
+  return counts;
+}
+
+async function collectPoolSubscriptionFormats(pool, sources = poolMembers(pool?.id, { onlyHealthyCandidates: true })) {
+  if (!pool || !pool.enabled) throw apiError("POOL_NOT_CONFIGURED", "Configure an enabled resource pool before activating a subscription", 503);
+  if (!sources.length) throw apiError("POOL_EMPTY", "The resource pool has no enabled sources", 503);
+  const settled = await Promise.allSettled(sources.map((source) => fetchUpstream(source.id, "universal")));
+  const sourceResults = settled.map((result, index) => {
+    const source = sources[index];
+    if (result.status === "fulfilled") return { sourceId: source.id, sourceName: source.name, ok: true, content: result.value.content, usage: result.value.usage || null };
+    return { sourceId: source.id, sourceName: source.name, ok: false, code: result.reason?.code || "UPSTREAM_FETCH_FAILED" };
+  });
+  const successful = sourceResults.filter((result) => result.ok);
+  if (!successful.length) throw apiError("POOL_SYNC_FAILED", "No healthy upstream source is available", 502);
+  const merged = mergeUniversalContents(successful.map((result) => result.content));
+  if (!formatLooksUsable(merged.content, "universal")) throw apiError("POOL_INVALID_CONTENT", "Healthy upstream sources produced no supported nodes", 502);
+  const clashContent = convertUniversalToClash(merged.content);
+  const singboxContent = convertUniversalToSingBox(merged.content);
+  const warnings = sourceResults.filter((result) => !result.ok).map((result) => `${result.sourceName}: ${result.code}`);
+  return {
+    // A single healthy source keeps the existing aggregate usage signal. Once
+    // several sources are merged, summing their shared counters would invent a
+    // customer quota, so no aggregate usage is reported.
+    universal: { content: merged.content, source: "upstream", sourceId: successful[0].sourceId, usage: successful.length === 1 ? successful[0].usage : null },
+    clash: { content: clashContent, source: "upstream", sourceId: successful[0].sourceId },
+    singbox: { content: singboxContent, source: "upstream", sourceId: successful[0].sourceId },
+    warnings, sourceResults, stats: { healthySources: successful.length, failedSources: sourceResults.length - successful.length, totalNodes: merged.totalNodes, uniqueNodes: merged.uniqueNodes, protocols: protocolCounts(merged.content) },
+  };
+}
+
+function persistPoolSourceStates(subscriptionId, sourceResults, timestamp = now()) {
+  const assignment = db.prepare(`UPDATE subscription_source_assignments SET state = ?, last_sync_at = ?,
+    last_sync_status = ?, last_sync_error = ?, updated_at = ? WHERE subscription_id = ? AND source_id = ?`);
+  const sourceUpdate = db.prepare("UPDATE upstream_sources SET last_sync_at = ?, last_sync_status = ?, last_sync_error = ?, updated_at = ? WHERE id = ?");
+  db.transaction(() => sourceResults.forEach((result) => {
+    const status = result.ok ? "ok" : "stale";
+    const error = result.ok ? null : result.code;
+    assignment.run(result.ok ? "active" : "stale", timestamp, status, error, timestamp, subscriptionId, result.sourceId);
+    sourceUpdate.run(timestamp, status, error, timestamp, result.sourceId);
+  }))();
+}
+
+function recordPoolSyncRun({ poolId, subscriptionId = null, status, stats = {}, error = null, startedAt }) {
+  db.prepare(`INSERT INTO upstream_sync_runs
+    (pool_id, subscription_id, status, healthy_sources, failed_sources, total_nodes, unique_nodes, error, started_at, finished_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(poolId || null, subscriptionId, status, Number(stats.healthySources || 0), Number(stats.failedSources || 0), Number(stats.totalNodes || 0), Number(stats.uniqueNodes || 0), error, startedAt, now());
+}
+
+async function syncPoolSubscriptionInternal(subscription) {
+  const startedAt = now();
+  const pool = poolById(subscription.pool_id);
+  try {
+    const sources = ensureSubscriptionSourceAssignments(subscription.id, pool?.id, subscription.source_id)
+      .filter((source) => source.enabled && source.pool_member_enabled !== 0);
+    const result = await collectPoolSubscriptionFormats(pool, sources);
+    if (subscriptionChangedSinceSyncStarted(subscription)) return currentSubscription(subscription.user_id);
+    const syncError = result.warnings.length ? result.warnings.join("; ") : null;
+    db.prepare(`UPDATE subscriptions SET universal_content = ?, clash_content = ?, singbox_content = ?, source_id = ?,
+      last_sync_at = ?, last_sync_status = ?, last_sync_error = ?, usage_source = ?, upstream_used_gb = ?,
+      upstream_total_gb = ?, upstream_expires_at = ?, upstream_synced_at = ?, updated_at = ? WHERE id = ?`)
+      .run(result.universal.content, result.clash.content, result.singbox.content, result.universal.sourceId, startedAt,
+        syncError ? "partial" : "upstream", syncError,
+        result.universal.usage ? "upstream-aggregate" : subscription.usage_source || "manual",
+        result.universal.usage?.usedGb ?? subscription.upstream_used_gb,
+        result.universal.usage?.totalGb ?? subscription.upstream_total_gb,
+        result.universal.usage?.expiresAt ?? subscription.upstream_expires_at,
+        result.universal.usage ? startedAt : subscription.upstream_synced_at, startedAt, subscription.id);
+    persistPoolSourceStates(subscription.id, result.sourceResults, startedAt);
+    recordPoolSyncRun({ poolId: pool.id, subscriptionId: subscription.id, status: syncError ? "partial" : "ok", stats: result.stats, startedAt });
+  } catch (error) {
+    if (subscriptionChangedSinceSyncStarted(subscription)) return currentSubscription(subscription.user_id);
+    db.prepare(`UPDATE subscriptions SET last_sync_at = ?, last_sync_status = 'stale', last_sync_error = ?, updated_at = ? WHERE id = ?`)
+      .run(startedAt, error.code || "POOL_SYNC_FAILED", startedAt, subscription.id);
+    recordPoolSyncRun({ poolId: subscription.pool_id, subscriptionId: subscription.id, status: "stale", error: error.code || "POOL_SYNC_FAILED", startedAt });
+  }
+  expireSubscriptions();
+  const updated = currentSubscription(subscription.user_id);
+  recordUsageSnapshot(updated, startedAt);
+  return updated;
+}
+
 async function syncSubscriptionInternal(subscription) {
+  if (subscription.pool_id) return syncPoolSubscriptionInternal(subscription);
   const fetchedAt = now();
   try {
     const { universal, clash, singbox, warnings } = await fetchSubscriptionFormats(subscription.source_id, subscription);
@@ -1593,6 +1808,33 @@ function scheduleProviderUsageSync() {
   }
 }
 
+let resourcePoolSyncInFlight = false;
+let resourcePoolSyncTimer = null;
+async function syncResourcePoolsInBackground() {
+  if (resourcePoolSyncInFlight || syncLocks.has("all")) return;
+  resourcePoolSyncInFlight = true;
+  try {
+    const pools = db.prepare("SELECT * FROM upstream_pools WHERE enabled = 1").all();
+    let synchronized = 0;
+    for (const pool of pools) {
+      const subscriptions = db.prepare("SELECT * FROM subscriptions WHERE status = 'active' AND pool_id = ?").all(pool.id);
+      const results = await mapWithConcurrency(subscriptions, upstreamSyncConcurrency, async (subscription) => syncSubscription(subscription));
+      synchronized += results.length;
+    }
+    if (pools.length) logEvent("upstream.pool_sync", { pools: pools.length, subscriptions: synchronized, success: true });
+  } catch (error) {
+    logEvent("upstream.pool_sync", { code: error.code || "POOL_SYNC_FAILED", success: false }, "warn");
+  } finally {
+    resourcePoolSyncInFlight = false;
+  }
+}
+
+function scheduleResourcePoolSync() {
+  if (resourcePoolSyncTimer) clearInterval(resourcePoolSyncTimer);
+  resourcePoolSyncTimer = setInterval(syncResourcePoolsInBackground, 5 * 60 * 1000);
+  resourcePoolSyncTimer.unref();
+}
+
 app.patch("/api/admin/users/:id/subscription", adminAuth, (req, res, next) => {
   try {
     expireSubscriptions();
@@ -1706,7 +1948,94 @@ app.post("/api/admin/orders/:id/cancel", adminAuth, (req, res, next) => {
 app.get("/api/admin/upstream", adminAuth, (_req, res) => {
   const sources = db.prepare("SELECT * FROM upstream_sources ORDER BY is_default DESC, id ASC").all();
   const enabled = sources.some((source) => Boolean(source.enabled));
-  res.json({ sources: sources.map(sourceView), configured: enabled, source: enabled ? "configured" : "demo" });
+  const pools = db.prepare("SELECT * FROM upstream_pools ORDER BY is_default DESC, id ASC").all();
+  res.json({ sources: sources.map(sourceView), pools: pools.map(poolView), configured: enabled, source: enabled ? "configured" : "demo" });
+});
+
+function validPoolSourceIds(sourceIds) {
+  const ids = [...new Set((Array.isArray(sourceIds) ? sourceIds : []).map(Number).filter(Number.isInteger).filter((id) => id > 0))];
+  if (!ids.length) throw apiError("POOL_EMPTY", "Select at least one upstream source for the resource pool");
+  const found = db.prepare(`SELECT id FROM upstream_sources WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids).map((source) => source.id);
+  if (found.length !== ids.length) throw apiError("SOURCE_NOT_FOUND", "One or more upstream sources were not found", 404);
+  return ids;
+}
+
+function replacePoolMembers(poolId, sourceIds) {
+  const timestamp = now();
+  const remove = db.prepare("DELETE FROM upstream_pool_members WHERE pool_id = ?");
+  const insert = db.prepare(`INSERT INTO upstream_pool_members (pool_id, source_id, enabled, priority, created_at, updated_at)
+    VALUES (?, ?, 1, ?, ?, ?)`);
+  db.transaction(() => {
+    remove.run(poolId);
+    sourceIds.forEach((sourceId, index) => insert.run(poolId, sourceId, index, timestamp, timestamp));
+  })();
+}
+
+app.get("/api/admin/pools", adminAuth, (_req, res) => {
+  const pools = db.prepare("SELECT * FROM upstream_pools ORDER BY is_default DESC, id ASC").all();
+  res.json({ pools: pools.map(poolView) });
+});
+
+app.post("/api/admin/pools", adminAuth, (req, res, next) => {
+  try {
+    const name = String(req.body?.name || "").trim().slice(0, 80);
+    const sourceIds = validPoolSourceIds(req.body?.sourceIds);
+    const isDefault = req.body?.isDefault === undefined ? !defaultPool() : Boolean(req.body.isDefault);
+    if (!name) throw apiError("INVALID_POOL_NAME", "Resource pool name is required");
+    const timestamp = now();
+    if (isDefault) db.prepare("UPDATE upstream_pools SET is_default = 0 WHERE is_default = 1").run();
+    const result = db.prepare(`INSERT INTO upstream_pools (name, enabled, is_default, delivery_mode, created_at, updated_at)
+      VALUES (?, 1, ?, 'merge_all', ?, ?)`).run(name, isDefault ? 1 : 0, timestamp, timestamp);
+    replacePoolMembers(result.lastInsertRowid, sourceIds);
+    res.status(201).json({ pool: poolView(poolById(result.lastInsertRowid)) });
+  } catch (error) { next(error); }
+});
+
+app.put("/api/admin/pools/:id", adminAuth, (req, res, next) => {
+  try {
+    const pool = poolById(Number(req.params.id));
+    if (!pool) throw apiError("POOL_NOT_FOUND", "Resource pool was not found", 404);
+    const name = String(req.body?.name ?? pool.name).trim().slice(0, 80);
+    const enabled = req.body?.enabled === undefined ? Boolean(pool.enabled) : Boolean(req.body.enabled);
+    const isDefault = req.body?.isDefault === undefined ? Boolean(pool.is_default) : Boolean(req.body.isDefault);
+    const sourceIds = Object.prototype.hasOwnProperty.call(req.body || {}, "sourceIds") ? validPoolSourceIds(req.body.sourceIds) : poolMembers(pool.id).map((source) => source.id);
+    if (!name) throw apiError("INVALID_POOL_NAME", "Resource pool name is required");
+    if (isDefault && !enabled) throw apiError("DEFAULT_POOL_DISABLED", "The default resource pool must be enabled", 409);
+    if (isDefault) db.prepare("UPDATE upstream_pools SET is_default = 0 WHERE id != ?").run(pool.id);
+    db.prepare("UPDATE upstream_pools SET name = ?, enabled = ?, is_default = ?, updated_at = ? WHERE id = ?")
+      .run(name, enabled ? 1 : 0, isDefault ? 1 : 0, now(), pool.id);
+    if (!enabled) db.prepare("UPDATE upstream_pools SET is_default = 0 WHERE id = ?").run(pool.id);
+    replacePoolMembers(pool.id, sourceIds);
+    res.json({ pool: poolView(poolById(pool.id)) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/admin/pools/:id/preview", adminAuth, async (req, res, next) => {
+  try {
+    const pool = poolById(Number(req.params.id));
+    if (!pool) throw apiError("POOL_NOT_FOUND", "Resource pool was not found", 404);
+    const result = await collectPoolSubscriptionFormats(pool);
+    res.json({ pool: poolView(pool), summary: result.stats, sources: result.sourceResults.map((source) => ({
+      id: source.sourceId, name: source.sourceName, status: source.ok ? "healthy" : "failed", code: source.ok ? undefined : source.code,
+    })) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/admin/pools/:id/sync", adminAuth, async (req, res, next) => {
+  const poolId = Number(req.params.id);
+  const lockKey = `pool:${poolId}`;
+  if (syncLocks.has(lockKey) || syncLocks.has("all")) return next(apiError("SYNC_IN_PROGRESS", "A synchronization is already in progress", 409));
+  syncLocks.add(lockKey);
+  try {
+    const pool = poolById(poolId);
+    if (!pool) throw apiError("POOL_NOT_FOUND", "Resource pool was not found", 404);
+    const subscriptions = db.prepare("SELECT * FROM subscriptions WHERE status = 'active' AND pool_id = ?").all(pool.id);
+    const results = await mapWithConcurrency(subscriptions, upstreamSyncConcurrency, async (subscription) => syncSubscription(subscription));
+    res.json({ pool: poolView(pool), total: subscriptions.length,
+      success: results.filter((item) => item.last_sync_status === "upstream").length,
+      partial: results.filter((item) => item.last_sync_status === "partial").length,
+      stale: results.filter((item) => item.last_sync_status === "stale").length, syncedAt: now() });
+  } catch (error) { next(error); } finally { syncLocks.delete(lockKey); }
 });
 
 app.post("/api/admin/sources", adminAuth, (req, res, next) => {
@@ -1726,6 +2055,7 @@ app.post("/api/admin/sources", adminAuth, (req, res, next) => {
       (name, url_encrypted, universal_url_encrypted, clash_url_encrypted, singbox_url_encrypted, enabled, is_default, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`).run(name, encrypt(url), encrypt(url), clashUrl ? encrypt(clashUrl) : null, singboxUrl ? encrypt(singboxUrl) : null, hasDefault ? 0 : 1, timestamp, timestamp);
     ensureEnabledDefaultSource();
+    ensureDefaultResourcePool();
     res.status(201).json({ source: sourceView(db.prepare("SELECT * FROM upstream_sources WHERE id = ?").get(result.lastInsertRowid)) });
   } catch (error) { next(error); }
 });
@@ -1825,7 +2155,9 @@ app.delete("/api/admin/sources/:id", adminAuth, (req, res, next) => {
   try {
     const source = sourceById(Number(req.params.id));
     if (!source) throw apiError("SOURCE_NOT_FOUND", "Source was not found", 404);
-    const boundUsers = db.prepare("SELECT COUNT(*) AS count FROM subscriptions WHERE source_id = ? AND status = 'active'").get(source.id).count;
+    const boundUsers = db.prepare(`SELECT COUNT(DISTINCT s.id) AS count FROM subscriptions s
+      LEFT JOIN subscription_source_assignments a ON a.subscription_id = s.id
+      WHERE s.status = 'active' AND (s.source_id = ? OR a.source_id = ?)`).get(source.id, source.id).count;
     if (boundUsers > 0) throw apiError("SOURCE_IN_USE", `This source is bound to ${boundUsers} active subscription(s); reassign them before deleting`, 409);
     db.prepare("DELETE FROM upstream_sources WHERE id = ?").run(source.id);
     ensureEnabledDefaultSource();
@@ -1847,10 +2179,52 @@ app.put("/api/admin/users/:id/source", adminAuth, (req, res, next) => {
       if (!source.enabled) throw apiError("SOURCE_DISABLED", "Cannot bind a disabled source", 409);
     }
     const timestamp = now();
-    db.prepare("UPDATE subscriptions SET source_id = ?, last_sync_at = NULL, last_sync_status = 'pending', last_sync_error = NULL, updated_at = ? WHERE id = ?")
-      .run(sourceId, timestamp, existing.id);
+    db.transaction(() => {
+      db.prepare("DELETE FROM subscription_source_assignments WHERE subscription_id = ?").run(existing.id);
+      db.prepare("UPDATE subscriptions SET source_id = ?, pool_id = NULL, last_sync_at = NULL, last_sync_status = 'pending', last_sync_error = NULL, updated_at = ? WHERE id = ?")
+        .run(sourceId, timestamp, existing.id);
+      if (sourceId) db.prepare(`INSERT INTO subscription_source_assignments (subscription_id, source_id, state, created_at, updated_at)
+        VALUES (?, ?, 'pending', ?, ?)`).run(existing.id, sourceId, timestamp, timestamp);
+    })();
     subscriptionSyncPromises.delete(existing.id);
     res.json({ ok: true, sourceId });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/admin/users/:id/pool", adminAuth, (req, res, next) => {
+  try {
+    const subscription = db.prepare("SELECT * FROM subscriptions WHERE user_id = ?").get(Number(req.params.id));
+    if (!subscription) throw apiError("SUBSCRIPTION_NOT_FOUND", "User has no subscription", 404);
+    const sources = assignedPoolSources(subscription).map((source) => ({
+      id: source.id, name: source.name, state: source.assignment_state || "pending",
+      lastSyncAt: source.assignment_last_sync_at || null, lastSyncStatus: source.assignment_last_sync_status || null,
+      lastSyncError: source.assignment_last_sync_error || null,
+    }));
+    res.json({ assignment: { subscriptionId: subscription.id, pool: subscription.pool_id ? poolView(poolById(subscription.pool_id)) : null, sources } });
+  } catch (error) { next(error); }
+});
+
+app.put("/api/admin/users/:id/pool", adminAuth, (req, res, next) => {
+  try {
+    const subscription = db.prepare("SELECT * FROM subscriptions WHERE user_id = ?").get(Number(req.params.id));
+    const pool = poolById(Number(req.body?.poolId));
+    if (!subscription) throw apiError("SUBSCRIPTION_NOT_FOUND", "User has no subscription", 404);
+    if (subscription.status !== "active") throw apiError("SUBSCRIPTION_NOT_ACTIVE", "Only an active subscription can be assigned a resource pool", 409);
+    if (!pool) throw apiError("POOL_NOT_FOUND", "Resource pool was not found", 404);
+    if (!pool.enabled) throw apiError("POOL_DISABLED", "Cannot assign a disabled resource pool", 409);
+    const sources = poolMembers(pool.id, { onlyHealthyCandidates: true });
+    if (!sources.length) throw apiError("POOL_EMPTY", "The resource pool has no enabled sources", 409);
+    const timestamp = now();
+    db.transaction(() => {
+      db.prepare("DELETE FROM subscription_source_assignments WHERE subscription_id = ?").run(subscription.id);
+      db.prepare("UPDATE subscriptions SET pool_id = ?, source_id = ?, last_sync_at = NULL, last_sync_status = 'pending', last_sync_error = NULL, updated_at = ? WHERE id = ?")
+        .run(pool.id, sources[0].id, timestamp, subscription.id);
+      const insert = db.prepare(`INSERT INTO subscription_source_assignments (subscription_id, source_id, state, created_at, updated_at)
+        VALUES (?, ?, 'pending', ?, ?)`);
+      sources.forEach((source) => insert.run(subscription.id, source.id, timestamp, timestamp));
+    })();
+    subscriptionSyncPromises.delete(subscription.id);
+    res.json({ ok: true, assignment: { subscriptionId: subscription.id, pool: poolView(pool), sources: sources.map((source) => ({ id: source.id, name: source.name, state: "pending" })) } });
   } catch (error) { next(error); }
 });
 
@@ -1861,7 +2235,9 @@ app.post("/api/admin/sources/:id/sync", adminAuth, async (req, res, next) => {
   try {
     const source = sourceById(Number(req.params.id));
     if (!source) throw apiError("SOURCE_NOT_FOUND", "Source was not found", 404);
-    const subscriptions = db.prepare("SELECT * FROM subscriptions WHERE status = 'active' AND source_id = ?").all(source.id);
+    const subscriptions = db.prepare(`SELECT DISTINCT s.* FROM subscriptions s
+      LEFT JOIN subscription_source_assignments a ON a.subscription_id = s.id
+      WHERE s.status = 'active' AND (s.source_id = ? OR a.source_id = ?)`).all(source.id, source.id);
     const results = await mapWithConcurrency(subscriptions, upstreamSyncConcurrency, async (subscription) => {
       try {
         const synced = await syncSubscription(subscription);
@@ -2137,29 +2513,36 @@ async function completeOrder(order, baseUrl = publicBaseUrl) {
     expiresAt.setTime(Math.max(Date.now(), existingExpiry));
   }
   expiresAt.setTime(addBillingPeriods(expiresAt, Number(plan.billing_period_months || 1)).getTime());
-  // Renewals stay on the customer's assigned source; new subscriptions follow the configured assignment mode.
+  // The primary source remains for compatibility and routing reports. Pool members
+  // are merged into the customer-facing subscription content.
   const assignedRenewalSource = order.kind === "renewal" && existingSubscription?.source_id ? sourceById(existingSubscription.source_id) : null;
   const selectedSource = order.kind === "renewal" && existingSubscription?.source_id
     ? (assignedRenewalSource?.enabled ? assignedRenewalSource : null) || sourceForNewSubscription(order.user_id)
     : sourceForNewSubscription(order.user_id);
-  if (!selectedSource && !configuredUpstreamUrl() && (!allowDemoSubscription || productionRuntime)) {
+  const candidatePool = existingSubscription?.pool_id ? poolById(existingSubscription.pool_id) : poolForNewSubscription();
+  // Empty pools must not suppress the established local demo subscription path.
+  // In production this still fails closed because demo subscriptions are disabled.
+  const selectedPool = candidatePool && poolMembers(candidatePool.id, { onlyHealthyCandidates: true }).length ? candidatePool : null;
+  if (!selectedSource && !selectedPool && !configuredUpstreamUrl() && (!allowDemoSubscription || productionRuntime)) {
     throw apiError("UPSTREAM_NOT_CONFIGURED", "Configure an upstream source before activating a customer subscription", 503);
   }
-  const { universal, clash, singbox, warnings } = await fetchSubscriptionFormats(selectedSource?.id);
+  const poolResult = selectedPool ? await collectPoolSubscriptionFormats(selectedPool) : null;
+  const { universal, clash, singbox, warnings } = poolResult || await fetchSubscriptionFormats(selectedSource?.id);
+  const primarySourceId = selectedSource?.id || universal.sourceId;
   const timestamp = now();
   const transaction = db.transaction(() => {
     db.prepare("UPDATE orders SET status = 'paid', confirmed_at = ? WHERE id = ? AND status = 'processing'").run(timestamp, order.id);
     db.prepare(`INSERT INTO subscriptions
-      (user_id, plan_id, source_id, token, status, usage_source, upstream_used_gb, upstream_total_gb, upstream_expires_at, upstream_synced_at, expires_at, last_sync_at, last_sync_status,
+      (user_id, plan_id, source_id, pool_id, token, status, usage_source, upstream_used_gb, upstream_total_gb, upstream_expires_at, upstream_synced_at, expires_at, last_sync_at, last_sync_status,
        universal_content, clash_content, singbox_content, created_at, updated_at)
-      VALUES (@userId, @planId, @sourceId, @token, 'active', @usageSource, @upstreamUsed, @upstreamTotal, @upstreamExpires, @upstreamSynced, @expiresAt, @lastSyncAt, @lastSyncStatus, @universal, @clash, @singbox, @createdAt, @updatedAt)
-      ON CONFLICT(user_id) DO UPDATE SET plan_id = excluded.plan_id, source_id = excluded.source_id, token = excluded.token,
+      VALUES (@userId, @planId, @sourceId, @poolId, @token, 'active', @usageSource, @upstreamUsed, @upstreamTotal, @upstreamExpires, @upstreamSynced, @expiresAt, @lastSyncAt, @lastSyncStatus, @universal, @clash, @singbox, @createdAt, @updatedAt)
+      ON CONFLICT(user_id) DO UPDATE SET plan_id = excluded.plan_id, source_id = excluded.source_id, pool_id = excluded.pool_id, token = excluded.token,
         status = 'active', data_used_gb = 0, usage_source = excluded.usage_source, upstream_used_gb = excluded.upstream_used_gb,
         upstream_total_gb = excluded.upstream_total_gb, upstream_expires_at = excluded.upstream_expires_at,
         upstream_synced_at = excluded.upstream_synced_at, expires_at = excluded.expires_at, last_sync_at = excluded.last_sync_at,
         last_sync_status = excluded.last_sync_status, universal_content = excluded.universal_content,
         clash_content = excluded.clash_content, singbox_content = excluded.singbox_content, updated_at = excluded.updated_at`).run({
-      userId: order.user_id, planId: plan.id, sourceId: universal.sourceId,
+      userId: order.user_id, planId: plan.id, sourceId: primarySourceId, poolId: selectedPool?.id || null,
       token: order.kind === "renewal" && existingSubscription ? existingSubscription.token : subscriptionToken(),
       usageSource: universal.usage ? "upstream-aggregate" : "manual", upstreamUsed: universal.usage?.usedGb ?? null,
       upstreamTotal: universal.usage?.totalGb ?? null, upstreamExpires: universal.usage?.expiresAt ?? null,
@@ -2173,6 +2556,11 @@ async function completeOrder(order, baseUrl = publicBaseUrl) {
   });
   transaction();
   const subscription = currentSubscription(order.user_id);
+  if (selectedPool) {
+    ensureSubscriptionSourceAssignments(subscription.id, selectedPool.id, primarySourceId);
+    persistPoolSourceStates(subscription.id, poolResult.sourceResults, timestamp);
+    recordPoolSyncRun({ poolId: selectedPool.id, subscriptionId: subscription.id, status: warnings.length ? "partial" : "ok", stats: poolResult.stats, startedAt: timestamp });
+  }
   recordUsageSnapshot(subscription, timestamp);
   logEvent("subscription.activated", { userId: order.user_id, orderId: order.id, sourceId: subscription.source_id, status: "active", success: true });
   return { order: { ...order, status: "paid", confirmedAt: timestamp }, subscription: subscriptionView(subscription, currentPlan(subscription), baseUrl) };
@@ -2460,7 +2848,7 @@ function serveSubscription(field, contentType) {
       // A supplier can intermittently fail its generic endpoint while still
       // serving a usable converted format. Do not make Clash/SingBox clients
       // wait for or depend on an unrelated generic-format refresh.
-      if (subscription.status === "active" && format !== "universal" && (invalidCachedFormat || missingClashGroup || !subscription[field])) {
+      if (subscription.status === "active" && !subscription.pool_id && format !== "universal" && (invalidCachedFormat || missingClashGroup || !subscription[field])) {
         try { transientFormatContent = (await fetchUpstream(subscription.source_id, format)).content; } catch { /* Let the normal stale-cache path handle a second attempt. */ }
         if (transientFormatContent) {
           subscription[field] = transientFormatContent;
@@ -2537,11 +2925,14 @@ export function createApp({ database: injectedDatabase, provider, mailer } = {})
 
 export function startBackgroundJobs() {
   scheduleProviderUsageSync();
+  scheduleResourcePoolSync();
 }
 
 export function stopBackgroundJobs() {
   if (providerUsageSyncTimer) clearInterval(providerUsageSyncTimer);
   providerUsageSyncTimer = null;
+  if (resourcePoolSyncTimer) clearInterval(resourcePoolSyncTimer);
+  resourcePoolSyncTimer = null;
 }
 
 export function closeDatabase() {

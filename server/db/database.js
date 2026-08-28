@@ -86,6 +86,35 @@ export function createDatabase({ dataDir }) {
       last_sync_at TEXT, last_sync_status TEXT, last_sync_error TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS upstream_pools (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+      enabled INTEGER NOT NULL DEFAULT 1, is_default INTEGER NOT NULL DEFAULT 0,
+      delivery_mode TEXT NOT NULL DEFAULT 'merge_all',
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS upstream_pool_members (
+      pool_id INTEGER NOT NULL, source_id INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+      priority INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY (pool_id, source_id),
+      FOREIGN KEY(pool_id) REFERENCES upstream_pools(id) ON DELETE CASCADE,
+      FOREIGN KEY(source_id) REFERENCES upstream_sources(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS subscription_source_assignments (
+      subscription_id INTEGER NOT NULL, source_id INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+      last_sync_at TEXT, last_sync_status TEXT, last_sync_error TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY (subscription_id, source_id),
+      FOREIGN KEY(subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE,
+      FOREIGN KEY(source_id) REFERENCES upstream_sources(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS upstream_sync_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, pool_id INTEGER, subscription_id INTEGER,
+      status TEXT NOT NULL, healthy_sources INTEGER NOT NULL DEFAULT 0, failed_sources INTEGER NOT NULL DEFAULT 0,
+      total_nodes INTEGER NOT NULL DEFAULT 0, unique_nodes INTEGER NOT NULL DEFAULT 0,
+      error TEXT, started_at TEXT NOT NULL, finished_at TEXT,
+      FOREIGN KEY(pool_id) REFERENCES upstream_pools(id) ON DELETE SET NULL,
+      FOREIGN KEY(subscription_id) REFERENCES subscriptions(id) ON DELETE SET NULL
+    );
   `);
 
   const addColumn = (table, column, definition) => {
@@ -94,6 +123,7 @@ export function createDatabase({ dataDir }) {
   };
   addColumn("payment_submissions", "payment_method", "TEXT NOT NULL DEFAULT 'manual'");
   addColumn("subscriptions", "source_id", "INTEGER");
+  addColumn("subscriptions", "pool_id", "INTEGER");
   addColumn("plans", "billing_period_months", "INTEGER NOT NULL DEFAULT 1");
   addColumn("users", "referred_by_user_id", "INTEGER");
   addColumn("orders", "kind", "TEXT NOT NULL DEFAULT 'new'");
@@ -118,6 +148,10 @@ export function createDatabase({ dataDir }) {
     CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_user_id, status);
     CREATE INDEX IF NOT EXISTS idx_subscriptions_expiry ON subscriptions(status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_subscriptions_source_status ON subscriptions(source_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_subscriptions_pool_status ON subscriptions(pool_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_pool_members_source ON upstream_pool_members(source_id, enabled);
+    CREATE INDEX IF NOT EXISTS idx_subscription_source_assignments_source ON subscription_source_assignments(source_id, state);
+    CREATE INDEX IF NOT EXISTS idx_upstream_sync_runs_pool ON upstream_sync_runs(pool_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_usage_snapshots_user_time ON usage_snapshots(user_id, captured_at DESC);
     CREATE INDEX IF NOT EXISTS idx_usage_snapshots_subscription_time ON usage_snapshots(subscription_id, captured_at DESC);
     CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry ON user_sessions(expires_at);

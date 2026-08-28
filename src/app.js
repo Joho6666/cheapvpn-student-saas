@@ -40,6 +40,7 @@ const adminState = {
   orders: [],
   tickets: [],
   sources: [],
+  pools: [],
   upstream: null,
   system: null,
   paymentSettings: null,
@@ -471,6 +472,9 @@ function renderAdminApp() {
       </main>
     </div>
   `;
+  if (adminState.view === "upstream") {
+    document.querySelector(".admin-section-intro")?.insertAdjacentHTML("afterend", renderAdminPools());
+  }
   injectAdminTokenResetButtons();
   bindAdminEvents();
   injectAdminOperations();
@@ -557,6 +561,17 @@ function renderAdminTickets() {
 function renderAdminPlans() {
   const cards = adminState.plans.map((plan) => `<article class="admin-card p-5"><div class="flex items-center justify-between gap-3"><div><span class="admin-eyebrow">${escapeHtml(plan.slug)}</span><h3>${escapeHtml(plan.name)}</h3></div><span class="admin-status ${plan.active ? "good" : "warn"}"><i></i>${plan.active ? "启用" : "停用"}</span></div><div class="grid grid-cols-2 gap-3 mt-5"><div class="panel-soft p-3"><small>首个周期</small><strong>¥${Number(plan.firstMonth).toFixed(2)}</strong></div><div class="panel-soft p-3"><small>续费周期</small><strong>¥${Number(plan.renewal).toFixed(2)}</strong></div><div class="panel-soft p-3"><small>周期长度</small><strong>${plan.periodMonths || 1} 个月</strong></div><div class="panel-soft p-3"><small>周期流量</small><strong>${Number(plan.dataTotal).toFixed(0)} GB</strong></div><div class="panel-soft p-3"><small>设备</small><strong>${plan.devices} 台</strong></div></div><div class="flex gap-3 mt-5"><button class="admin-outline" data-plan-edit="${plan.id}">编辑套餐</button><button class="admin-outline" data-plan-toggle="${plan.id}" data-plan-active="${plan.active}">${plan.active ? "停用" : "启用"}</button>${adminState.plans.length > 1 ? `<button class="admin-ghost" data-plan-delete="${plan.id}" ${plan.active && adminState.plans.filter((item) => item.active).length <= 1 ? "disabled" : ""}>停用套餐</button>` : ""}</div></article>`).join("");
   return `<section class="admin-view"><div class="admin-section-intro"><div><span class="admin-eyebrow">PRODUCT CATALOG</span><h2>套餐管理</h2><p>统一维护价格、周期、流量配额和设备上限。</p></div></div><div class="grid xl:grid-cols-3 gap-5">${cards}</div><div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">ADD PLAN</span><h3>新增套餐</h3></div></div><form id="plan-form" class="admin-form grid md:grid-cols-2 gap-4"><label>套餐标识<input id="plan-slug" placeholder="student-plus" pattern="[a-z0-9-]+" required /></label><label>套餐名称<input id="plan-name" placeholder="留学生进阶版" required /></label><label>首个周期价格<input id="plan-first" type="number" min="0" step="0.01" placeholder="9.9" required /></label><label>续费周期价格<input id="plan-renewal" type="number" min="0" step="0.01" placeholder="19.9" required /></label><label>周期长度（月）<input id="plan-period" type="number" min="1" max="24" step="1" value="1" required /></label><label>周期流量 GB<input id="plan-data" type="number" min="0" step="0.1" placeholder="50" required /></label><label>设备数<input id="plan-devices" type="number" min="1" max="100" step="1" placeholder="2" required /></label><div><button class="admin-primary" type="submit">保存套餐<span class="material-symbols-outlined">add</span></button></div><p class="admin-form-hint" id="plan-form-hint">周期为 1 表示月付，12 表示年付；已有订阅不会被删除。</p></form></div></section>`;
+}
+
+function renderAdminPools() {
+  const sourceOptions = adminState.sources.map((source) => `<option value="${source.id}">${escapeHtml(source.name)}${source.enabled ? "" : "（已停用）"}</option>`).join("");
+  const cards = adminState.pools.map((pool) => {
+    const memberIds = new Set((pool.members || []).map((member) => Number(member.id)));
+    const options = adminState.sources.map((source) => `<option value="${source.id}" ${memberIds.has(Number(source.id)) ? "selected" : ""}>${escapeHtml(source.name)}</option>`).join("");
+    const health = (pool.members || []).filter((member) => member.enabled).length;
+    return `<article class="admin-card admin-config-card"><div class="admin-card-heading"><div><span class="admin-eyebrow">RESOURCE POOL</span><h3>${escapeHtml(pool.name)}</h3></div><span class="admin-status ${pool.enabled ? "good" : "warn"}"><i></i>${pool.enabled ? "启用" : "停用"}</span></div><p class="admin-form-hint">${pool.isDefault ? "默认资源池：新用户订阅会合并所有启用成员。" : "非默认资源池：可手动分配给指定用户。"} 当前 ${health}/${pool.memberCount} 个成员可参与合并。</p><form class="admin-form pool-edit-form" data-pool-id="${pool.id}"><label>资源池名称<input name="name" value="${escapeHtml(pool.name)}" required /></label><label>成员货源（按 Ctrl/⌘ 多选）<select name="sourceIds" multiple size="${Math.min(6, Math.max(3, adminState.sources.length))}" required>${options}</select></label><div class="admin-config-actions"><label class="flex items-center gap-2"><input name="enabled" type="checkbox" ${pool.enabled ? "checked" : ""} />启用资源池</label><label class="flex items-center gap-2"><input name="isDefault" type="checkbox" ${pool.isDefault ? "checked" : ""} />设为默认池</label><button class="admin-outline" type="submit">保存资源池</button><button class="admin-outline" type="button" data-pool-preview="${pool.id}">安全预览</button><button class="admin-outline" type="button" data-pool-sync="${pool.id}">立即同步</button></div></form></article>`;
+  }).join("");
+  return `<div class="admin-config-grid source-config-bottom"><div class="admin-card admin-config-card"><div class="admin-card-heading"><div><span class="admin-eyebrow">POOL DISTRIBUTION</span><h3>统一订阅资源池</h3></div><span class="admin-status good"><i></i>Node/Docker</span></div><p class="admin-form-hint">资源池会把所有健康货源合并为一条 CheapVPN 订阅。预览只返回数量和协议统计，绝不返回节点凭据。</p><form id="pool-form" class="admin-form"><label>资源池名称<input id="pool-name" placeholder="例如：全量节点池" required /></label><label>成员货源（按 Ctrl/⌘ 多选）<select id="pool-sources" multiple size="4" required>${sourceOptions}</select></label><label class="flex items-center gap-2"><input id="pool-default" type="checkbox" />设为默认资源池</label><button class="admin-primary" type="submit">创建资源池<span class="material-symbols-outlined">hub</span></button></form></div>${cards || `<div class="admin-card source-empty">当前后端尚未加载资源池。Node/Docker 部署时可在此创建。</div>`}</div>`;
 }
 
 function renderAdminUpstream() {
@@ -694,7 +709,7 @@ async function loadAdminState() {
   try {
     const userQuery = new URLSearchParams({ q: adminState.userQuery, page: String(adminState.userPage), pageSize: "50" });
     const orderQuery = new URLSearchParams({ q: adminState.orderQuery, status: adminState.orderStatus, page: String(adminState.orderPage), pageSize: "50" });
-    const [overview, operations, users, orders, tickets, upstream, plans, system, paymentSettings, usageSettings, emailSettings] = await Promise.all([
+    const [overview, operations, users, orders, tickets, upstream, pools, plans, system, paymentSettings, usageSettings, emailSettings] = await Promise.all([
       adminApiRequest("/admin/overview"),
       // Node exposes the richer metrics endpoint, while the experimental
       // Worker intentionally does not. Keep it optional so one parity gap
@@ -705,6 +720,9 @@ async function loadAdminState() {
       adminApiRequest(`/admin/orders?${orderQuery}`),
       adminApiRequest("/admin/tickets"),
       adminApiRequest("/admin/upstream"),
+      // Resource pools are a Node/Docker production feature. The Cloudflare
+      // MVP intentionally does not implement it, so keep its Admin UI usable.
+      adminApiRequest("/admin/pools").catch(() => ({ pools: [] })),
       adminApiRequest("/admin/plans"),
       adminApiRequest("/admin/system"),
       adminApiRequest("/admin/settings/payment"),
@@ -720,6 +738,7 @@ async function loadAdminState() {
     adminState.tickets = tickets.tickets;
     adminState.plans = plans.plans;
     adminState.upstream = upstream;
+    adminState.pools = pools.pools || [];
     adminState.system = system;
     adminState.paymentSettings = paymentSettings;
     adminState.usageSettings = usageSettings;
@@ -1003,6 +1022,55 @@ function bindAdminEvents() {
       if (hint) hint.textContent = error.message;
       event.currentTarget.disabled = false;
     }
+  });
+  document.querySelector("#pool-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector("button");
+    const sourceIds = [...document.querySelector("#pool-sources").selectedOptions].map((option) => Number(option.value));
+    button.disabled = true;
+    try {
+      await adminApiRequest("/admin/pools", { method: "POST", body: { name: document.querySelector("#pool-name").value, sourceIds, isDefault: document.querySelector("#pool-default").checked } });
+      showAdminMessage("资源池已创建；新用户订阅会使用该池的健康成员。");
+      await loadAdminState();
+    } catch (error) { showAdminMessage(error.message); button.disabled = false; }
+  });
+  document.querySelectorAll(".pool-edit-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const poolId = event.currentTarget.dataset.poolId;
+      const button = event.currentTarget.querySelector("button[type=submit]");
+      const sourceIds = [...event.currentTarget.querySelector("[name=sourceIds]").selectedOptions].map((option) => Number(option.value));
+      button.disabled = true;
+      try {
+        await adminApiRequest(`/admin/pools/${poolId}`, { method: "PUT", body: {
+          name: event.currentTarget.querySelector("[name=name]").value, sourceIds,
+          enabled: event.currentTarget.querySelector("[name=enabled]").checked,
+          isDefault: event.currentTarget.querySelector("[name=isDefault]").checked,
+        } });
+        await loadAdminState();
+      } catch (error) { showAdminMessage(error.message); button.disabled = false; }
+    });
+  });
+  document.querySelectorAll("[data-pool-preview]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        const result = await adminApiRequest(`/admin/pools/${event.currentTarget.dataset.poolPreview}/preview`, { method: "POST" });
+        const protocols = Object.entries(result.summary.protocols || {}).map(([name, count]) => `${name} ${count}`).join("、") || "无可用协议";
+        showAdminMessage(`预览：${result.summary.healthySources} 个健康源，${result.summary.uniqueNodes}/${result.summary.totalNodes} 个去重后节点；${protocols}。`);
+      } catch (error) { showAdminMessage(error.message); }
+      finally { event.currentTarget.disabled = false; }
+    });
+  });
+  document.querySelectorAll("[data-pool-sync]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        const result = await adminApiRequest(`/admin/pools/${event.currentTarget.dataset.poolSync}/sync`, { method: "POST" });
+        showAdminMessage(`资源池同步完成：${result.success} 成功，${result.partial} 部分成功，${result.stale} 保留缓存。`);
+        await loadAdminState();
+      } catch (error) { showAdminMessage(error.message); event.currentTarget.disabled = false; }
+    });
   });
   document.querySelector("#upstream-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
