@@ -696,7 +696,11 @@ async function loadAdminState() {
     const orderQuery = new URLSearchParams({ q: adminState.orderQuery, status: adminState.orderStatus, page: String(adminState.orderPage), pageSize: "50" });
     const [overview, operations, users, orders, tickets, upstream, plans, system, paymentSettings, usageSettings, emailSettings] = await Promise.all([
       adminApiRequest("/admin/overview"),
-      adminApiRequest("/admin/metrics"),
+      // Node exposes the richer metrics endpoint, while the experimental
+      // Worker intentionally does not. Keep it optional so one parity gap
+      // cannot hide the users, orders, and payment settings that are shared
+      // by both backends.
+      adminApiRequest("/admin/metrics").catch(() => null),
       adminApiRequest(`/admin/users?${userQuery}`),
       adminApiRequest(`/admin/orders?${orderQuery}`),
       adminApiRequest("/admin/tickets"),
@@ -708,7 +712,7 @@ async function loadAdminState() {
       adminApiRequest("/admin/settings/email"),
     ]);
     adminState.metrics = overview.metrics;
-    adminState.operations = operations;
+    adminState.operations = operations || {};
     adminState.users = users.users;
     adminState.userPagination = users.pagination;
     adminState.orders = orders.orders;
