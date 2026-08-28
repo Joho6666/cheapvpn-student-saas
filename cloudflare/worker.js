@@ -11,8 +11,105 @@ const paymentMethodCatalog = [
 ];
 
 const now = () => new Date().toISOString();
-const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
+const securityHeaders = {
+  "content-security-policy": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'",
+  "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
+  "strict-transport-security": "max-age=31536000; includeSubDomains",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+};
+const withSecurityHeaders = (response) => {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(securityHeaders)) headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+};
+const json = (body, status = 200, headers = {}) => {
+  const responseHeaders = new Headers({ ...securityHeaders, "content-type": "application/json; charset=utf-8" });
+  for (const [name, value] of Object.entries(headers)) responseHeaders.set(name, value);
+  return new Response(JSON.stringify(body), { status, headers: responseHeaders });
+};
 const failure = (code, message, status = 400) => json({ error: { code, message } }, status);
+const remoteRedirectStatuses = new Set([301, 302, 303, 307, 308]);
+const remoteRedirectLimit = 5;
+
+class RemoteFetchError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "RemoteFetchError";
+    this.code = code;
+  }
+}
+
+function ipv4IsPrivate(value) {
+  const octets = value.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b] = octets;
+  return a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 0) ||
+    (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19));
+}
+
+function ipv6IsPrivate(value) {
+  const normalized = value.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "::" || normalized === "::1" || normalized.startsWith("fc") ||
+    normalized.startsWith("fd") || normalized.startsWith("fe8") || normalized.startsWith("fe9") ||
+    normalized.startsWith("fea") || normalized.startsWith("feb") || normalized.startsWith("ff") ||
+    normalized.startsWith("::ffff:");
+}
+
+function isIpLiteral(hostname) {
+  const value = String(hostname || "").replace(/^\[|\]$/g, "");
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value) || value.includes(":");
+}
+
+function isPrivateAddress(hostname) {
+  const value = String(hostname || "").replace(/^\[|\]$/g, "");
+  if (value.includes(":")) return ipv6IsPrivate(value);
+  return ipv4IsPrivate(value);
+}
+
+function validateRemoteUrl(input) {
+  let parsed;
+  try { parsed = new URL(String(input)); } catch { throw new RemoteFetchError("INVALID_REMOTE_URL", "Remote URL must be a valid HTTP(S) URL"); }
+  if (!(parsed.protocol === "http:" || parsed.protocol === "https:")) throw new RemoteFetchError("INVALID_REMOTE_URL", "Remote URL must use http or https");
+  if (parsed.username || parsed.password) throw new RemoteFetchError("REMOTE_URL_CREDENTIALS_FORBIDDEN", "Remote URL must not contain credentials");
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local") || hostname.endsWith(".internal") || hostname.endsWith(".home.arpa") || hostname === "metadata" || hostname === "metadata.google.internal" || hostname === "instance-data") {
+    throw new RemoteFetchError("PRIVATE_REMOTE_URL_BLOCKED", "Private or local upstream URLs are disabled");
+  }
+  if (isIpLiteral(hostname) && isPrivateAddress(hostname)) throw new RemoteFetchError("PRIVATE_REMOTE_URL_BLOCKED", "Private or local upstream URLs are disabled");
+  return parsed;
+}
+
+async function safeRemoteFetch(input, options = {}) {
+  let current = String(input);
+  for (let redirect = 0; redirect <= remoteRedirectLimit; redirect += 1) {
+    const parsed = validateRemoteUrl(current);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs || 10000);
+    let response;
+    try {
+      response = await fetch(parsed.toString(), {
+        method: options.method || "GET",
+        headers: options.headers || {},
+        redirect: "manual",
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof RemoteFetchError) throw error;
+      throw new RemoteFetchError("REMOTE_FETCH_FAILED", "Remote upstream request failed");
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!remoteRedirectStatuses.has(response.status)) return response;
+    const location = response.headers.get("location");
+    if (!location) throw new RemoteFetchError("REMOTE_REDIRECT_INVALID", "Remote redirect did not include a location");
+    if (redirect === remoteRedirectLimit) throw new RemoteFetchError("REMOTE_REDIRECT_LIMIT", "Remote redirect limit exceeded");
+    current = new URL(location, parsed).toString();
+  }
+  throw new RemoteFetchError("REMOTE_REDIRECT_LIMIT", "Remote redirect limit exceeded");
+}
 function base64url(bytes) {
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
@@ -167,13 +264,9 @@ async function sourceView(source, env) {
 }
 
 async function fetchText(url) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10000);
-  try {
-    const response = await fetch(url, { signal: controller.signal, headers: { "user-agent": "CheapVPN-Subscription-Sync/1.0" } });
-    if (!response.ok) throw new Error(`Upstream responded ${response.status}`);
-    return await response.text();
-  } finally { clearTimeout(timer); }
+  const response = await safeRemoteFetch(url, { headers: { "user-agent": "CheapVPN-Subscription-Sync/1.0" } });
+  if (!response.ok) throw new Error(`Upstream responded ${response.status}`);
+  return await response.text();
 }
 
 async function syncSubscription(subscription, env) {
@@ -423,7 +516,7 @@ async function fetchProviderUsageRecords(env) {
   const url = await setting(env, "usage_api_url_encrypted", "");
   const token = await setting(env, "usage_api_token_encrypted", "");
   if (!url) throw new Error("Usage API is not configured");
-  const response = await fetch(url, { headers: { Accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) } });
+  const response = await safeRemoteFetch(url, { headers: { Accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) } });
   if (!response.ok) throw new Error(`Usage API responded with ${response.status}`);
   const payload = await response.json();
   const records = Array.isArray(payload) ? payload : payload?.records;
@@ -723,7 +816,11 @@ async function adminRoutes(request, env, path) {
   if (request.method === "GET" && path === "/api/admin/upstream") { const sources = (await env.DB.prepare("SELECT * FROM upstream_sources ORDER BY is_default DESC, id ASC").all()).results; return json({ sources: await Promise.all(sources.map((source) => sourceView(source, env))) }); }
   if (request.method === "POST" && path === "/api/admin/sources") {
     const body = await requestData(request); const url = String(body.url || body.universalUrl || "").trim(); const clashUrl = String(body.clashUrl || "").trim(); const singboxUrl = String(body.singboxUrl || "").trim();
-    if (!/^https?:\/\//i.test(url) || (clashUrl && !/^https?:\/\//i.test(clashUrl)) || (singboxUrl && !/^https?:\/\//i.test(singboxUrl))) return failure("INVALID_UPSTREAM_URL", "Upstream URLs must start with http:// or https://");
+    try {
+      for (const value of [url, clashUrl, singboxUrl]) if (value) validateRemoteUrl(value);
+    } catch (error) {
+      return failure(error.code || "INVALID_UPSTREAM_URL", error.message || "Upstream URL is not allowed");
+    }
     const timestamp = now(); const result = await env.DB.prepare("INSERT INTO upstream_sources (name, url_encrypted, universal_url_encrypted, clash_url_encrypted, singbox_url_encrypted, enabled, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)").bind(String(body.name || "Upstream").trim().slice(0, 100), await encrypt(url, env), await encrypt(url, env), clashUrl ? await encrypt(clashUrl, env) : null, singboxUrl ? await encrypt(singboxUrl, env) : null, (await env.DB.prepare("SELECT COUNT(*) AS count FROM upstream_sources WHERE enabled = 1").first()).count === 0 ? 1 : 0, timestamp, timestamp).run();
     await ensureDefaultSource(env);
     return json({ source: await sourceView(await env.DB.prepare("SELECT * FROM upstream_sources WHERE id = ?").bind(result.meta.last_row_id).first(), env) }, 201);
@@ -778,11 +875,18 @@ async function adminRoutes(request, env, path) {
     const universalUrl = Object.hasOwn(body, "url") || Object.hasOwn(body, "universalUrl") ? String(body.url ?? body.universalUrl ?? "").trim() : null;
     const clashUrl = Object.hasOwn(body, "clashUrl") ? String(body.clashUrl || "").trim() : null;
     const singboxUrl = Object.hasOwn(body, "singboxUrl") ? String(body.singboxUrl || "").trim() : null;
-    for (const value of [universalUrl, clashUrl, singboxUrl]) if (value !== null && value && !/^https?:\/\//i.test(value)) return failure("INVALID_UPSTREAM_URL", "Upstream URLs must start with http:// or https://");
+    for (const value of [universalUrl, clashUrl, singboxUrl]) if (value !== null && value) {
+      try { validateRemoteUrl(value); } catch (error) { return failure(error.code || "INVALID_UPSTREAM_URL", error.message || "Upstream URL is not allowed"); }
+    }
     const currentUrls = universalUrl === null || clashUrl === null || singboxUrl === null ? await sourceUrls(source, env) : null;
     const nextUniversal = universalUrl === null ? currentUrls.universal : universalUrl;
     const nextClash = clashUrl === null ? currentUrls.clash : clashUrl || null;
     const nextSingbox = singboxUrl === null ? currentUrls.singbox : singboxUrl || null;
+    try {
+      for (const value of [nextUniversal, nextClash, nextSingbox]) if (value) validateRemoteUrl(value);
+    } catch (error) {
+      return failure(error.code || "INVALID_UPSTREAM_URL", error.message || "Upstream URL is not allowed");
+    }
     if (makeDefault) await env.DB.prepare("UPDATE upstream_sources SET is_default = 0").run();
     await env.DB.prepare("UPDATE upstream_sources SET name = ?, url_encrypted = ?, universal_url_encrypted = ?, clash_url_encrypted = ?, singbox_url_encrypted = ?, enabled = ?, is_default = ?, updated_at = ? WHERE id = ?")
       .bind(name, await encrypt(nextUniversal, env), await encrypt(nextUniversal, env), nextClash ? await encrypt(nextClash, env) : null, nextSingbox ? await encrypt(nextSingbox, env) : null, Number(enabled), Number(makeDefault && enabled), now(), source.id).run();
@@ -900,16 +1004,16 @@ async function servePublicSubscription(request, env, path) {
   const match = path.match(/^\/s(?:\/(clash|singbox))?\/([^/]+)$/);
   if (!match) return null;
   await expireSubscriptions(env); const subscription = await env.DB.prepare("SELECT * FROM subscriptions WHERE token = ? AND status = 'active'").bind(match[2]).first();
-  if (!subscription) return new Response("Subscription not found or expired", { status: 404 });
+  if (!subscription) return withSecurityHeaders(new Response("Subscription not found or expired", { status: 404 }));
   const format = match[1] === "clash" ? "clash_content" : match[1] === "singbox" ? "singbox_content" : "universal_content";
   const contentType = format === "clash_content" ? "text/yaml; charset=utf-8" : format === "singbox_content" ? "application/json; charset=utf-8" : "text/plain; charset=utf-8";
-  return new Response(subscription[format] || "", { headers: { "content-type": contentType, "cache-control": "no-store" } });
+  return withSecurityHeaders(new Response(subscription[format] || "", { headers: { "content-type": contentType, "cache-control": "no-store" } }));
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url); const path = url.pathname;
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": url.origin, "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS", "access-control-allow-headers": "authorization,content-type,idempotency-key" } });
+    if (request.method === "OPTIONS") return withSecurityHeaders(new Response(null, { status: 204, headers: { "access-control-allow-origin": url.origin, "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS", "access-control-allow-headers": "authorization,content-type,idempotency-key" } }));
     if (path === "/health") return json({ ok: true, service: "cheapvpn-edge" });
     if (path === "/health/ready") {
       const readiness = await productionChecks(env);
@@ -921,7 +1025,7 @@ export default {
     const subscription = await servePublicSubscription(request, env, path); if (subscription) return subscription;
     const admin = path.startsWith("/api/admin/") ? await adminRoutes(request, env, path) : null; if (admin) return admin;
     const api = path.startsWith("/api/") ? await userRoutes(request, env, path) : null; if (api) return api;
-    return env.ASSETS.fetch(request);
+    return withSecurityHeaders(await env.ASSETS.fetch(request));
   },
   async scheduled(_event, env) {
     await expireSubscriptions(env);
