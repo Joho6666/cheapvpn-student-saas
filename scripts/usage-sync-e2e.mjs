@@ -44,7 +44,7 @@ const providerPort = provider.address().port;
 const server = spawn(process.execPath, ["server/index.js"], {
   cwd: projectDir,
   env: { ...process.env, HOST: "127.0.0.1", PORT: String(apiPort), DATA_DIR: dataDir, PUBLIC_BASE_URL: apiBase,
-    ADMIN_PASSWORD: "usage-admin-password", PAYMENT_MODE: "mock", ALLOW_DEMO_SUBSCRIPTION: "true",
+    ADMIN_PASSWORD: "usage-admin-password", PAYMENT_MODE: "mock", ALLOW_DEMO_SUBSCRIPTION: "true", ALLOW_PRIVATE_UPSTREAM_URLS: "true",
     UPSTREAM_SUBSCRIPTION_URL: `http://127.0.0.1:${providerPort}/subscription`, UPSTREAM_USAGE_API_URL: `http://127.0.0.1:${providerPort}/usage`, UPSTREAM_USAGE_API_TOKEN: "provider-secret" },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -96,7 +96,7 @@ try {
     request("/api/subscription/sync", { method: "POST", token: registered.token }),
   ]);
   concurrentSyncs.forEach((result) => ok(result, "concurrent subscription sync"));
-  assert.equal(subscriptionRequests - requestsBeforeConcurrentSync, 3, "concurrent syncs should share one upstream format fetch");
+  assert.equal(subscriptionRequests - requestsBeforeConcurrentSync, 1, "concurrent resource-pool syncs should share one universal upstream fetch");
   const aggregateUsage = ok(await request("/api/usage", { token: registered.token }), "aggregate customer usage");
   assert.equal(aggregateUsage.used, 0, "shared aggregate must not be reported as individual customer usage");
   assert.equal(aggregateUsage.remaining, 50, "shared aggregate should leave the individual plan quota unconsumed");

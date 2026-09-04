@@ -2,6 +2,10 @@
 
 CheapVPN is a student subscription console with a Vite client and an Express + SQLite API.
 
+## Recommended production path
+
+Use Node.js + Docker + Caddy as the supported V1.0 deployment: Caddy terminates HTTPS, Express serves the built frontend/API, SQLite persists the service state, and the Provider layer reads from the configured supplier. The Cloudflare Worker is an experimental alternative for compatibility testing; it is not the target for new V1.0 business features.
+
 ## Screenshots
 
 | User console | Plans | Setup guide |
@@ -36,8 +40,12 @@ Both packages intentionally exclude real `.env` files, local databases, Cloudfla
 3. Run `npm run dev:full`.
 4. Open `http://127.0.0.1:3000` for the user console and `http://127.0.0.1:3000/#admin` for operations.
 
+Official WeChat Native and Alipay face-to-face QR payments run on Express/SQLite only. See `docs/PAYMENT_SETUP.md` and `docs/PAYMENT_PRODUCTION_CHECKLIST.md`. Cloudflare Worker payment is not the production payment entry.
+
 Run `npm run test:mvp` for the isolated customer/admin flow, or `npm run test:payment` for the signed payment webhook flow. Both tests use temporary SQLite data and do not modify the local database.
-Run `npm run test:all` to execute the complete customer, payment, usage, production-guard, and frontend-proxy regression suite.
+Run `npm run test:all` to execute the complete customer, payment, usage, security, order-concurrency, production-guard, and frontend-proxy regression suite. Native QR payment tests (`test:payment:wechat`, `test:payment:alipay`, `test:payment:idempotency`, `test:payment:security`, `test:payment:activation-recovery`) use mock providers and fixtures only; they never charge a real WeChat or Alipay account.
+
+The local test suite explicitly enables `ALLOW_PRIVATE_UPSTREAM_URLS=true` only for loopback fixtures. Production must leave it `false`; startup refuses to run when a production process tries to enable it. `GET /api/admin/metrics` is available to authenticated administrators and reports truthful UTC daily/monthly revenue, active subscriptions, expiring subscriptions, payment success rate, upstream sync failures, and open tickets.
 
 With the API and Vite frontend running, `npm run test:smoke` verifies the real frontend proxy at `APP_BASE_URL` (default `http://127.0.0.1:3000`) without creating or modifying a customer.
 
@@ -49,6 +57,7 @@ The Vite server proxies `/api` and `/s` to port 4000. The SQLite database is cre
 
 The subscription page generates the import QR code locally from the CheapVPN subscription URL, so the URL is not sent to an external QR service. Copy buttons remain available for clients that prefer manual import.
 The setup page selects a matching format per device: iPhone/iPad uses the universal subscription for Shadowrocket, while Windows, macOS, and Android use the Clash subscription by default. All three formats remain available from the subscription page.
+Subscription billing periods use fixed 30-day cycles. The API, public subscription links, scheduled expiry job, and administrator views all enforce the subscription `expires_at` timestamp; this is time-based expiry only and does not imply that cached upstream node credentials are revoked.
 
 Demo subscription content is disabled by default. Set `ALLOW_DEMO_SUBSCRIPTION=true` only for isolated local demonstrations; production customers must have a configured upstream source before an order can activate.
 Demo account access is controlled separately by `ALLOW_DEMO_ACCOUNT`; it is enabled only in the local development `.env` and must remain `false` in production.
@@ -77,6 +86,8 @@ The admin customer endpoint supports `GET /api/admin/users?q=name-or-email&page=
 
 Run `npm run build`, then `npm start`. The API server serves the built frontend and API from the same port. Set `PUBLIC_BASE_URL` to that public HTTPS origin before issuing subscriptions.
 
+See [docs/architecture.md](docs/architecture.md), [docs/provider-api.md](docs/provider-api.md), [docs/security.md](docs/security.md), [docs/deployment.md](docs/deployment.md), [docs/resource-pools.md](docs/resource-pools.md), and [docs/backend-parity.md](docs/backend-parity.md) for the V1.0 boundaries and launch checklist. Historical design exports are under `docs/design-history/`; the two root release archives remain for compatibility and should move to GitHub Releases in a later cleanup.
+
 ## Public deployment with Docker
 
 The included `compose.yml` runs the app and Caddy together. Caddy obtains and renews HTTPS certificates automatically, while the app keeps its SQLite database in a Docker volume.
@@ -89,6 +100,18 @@ The included `compose.yml` runs the app and Caddy together. Caddy obtains and re
 6. Confirm `https://your-domain/health/ready` returns `200`, then test registration, purchase, subscription import, expiry, and password recovery from a phone on a mobile network.
 
 Use `docker compose logs -f app` to inspect application logs. Run `docker compose exec app npm run backup` to create a consistent SQLite backup under `./backups/`; schedule that command daily from the server's cron service and copy backups to separate storage. Never expose port `4000` directly in production: only Caddy should be public.
+
+## Cloudflare deployment
+
+The Cloudflare Worker and D1 migrations are deployed separately from the Docker setup. The API token used by Wrangler must be allowed to deploy the Worker, apply D1 migrations, and manage Worker secrets; `wrangler whoami` alone only proves that the token is recognized.
+
+1. Run `npx wrangler whoami` and confirm the account is the one that owns `cheapvpn-prod`.
+2. Apply the committed migrations with `npx wrangler d1 migrations apply cheapvpn-prod --remote --config wrangler.jsonc`.
+3. Set the encrypted production values with `npx wrangler secret put ADMIN_ENCRYPTION_KEY`, `npx wrangler secret put ADMIN_PASSWORD`, and, for webhook payments, `npx wrangler secret put PAYMENT_WEBHOOK_SECRET`. Use a unique value for each secret; do not put secrets in `wrangler.jsonc` or GitHub.
+4. Run `npm run cf:deploy`.
+5. Open `https://cheapvpn.hejiujiuvpn.ccwu.cc/health/ready`. A `200` response is required before accepting customers; a `503` response lists the missing production checks.
+
+If a token can run `wrangler whoami` but D1 or secret commands return an authentication error, update the Cloudflare API token permissions before deploying. A dry-run validates the bundle only and does not update the live Worker.
 
 ## Payment callback
 

@@ -38,6 +38,7 @@ const server = spawn(process.execPath, ["server/index.js"], {
     PAYMENT_MODE: "mock",
     ALLOW_DEMO_SUBSCRIPTION: "true",
     ALLOW_DEMO_ACCOUNT: "false",
+    ALLOW_PRIVATE_UPSTREAM_URLS: "true",
     UPSTREAM_ASSIGNMENT_MODE: "round_robin",
      UPSTREAM_SUBSCRIPTION_URL: providerUrl,
   },
@@ -134,6 +135,9 @@ try {
   assert.equal(recoveredOrderDetail.order.status, "pending", "stale processing orders should recover to pending");
   const inviteePaid = expectOk(await request(`/api/orders/${inviteeOrder.order.id}/confirm`, { method: "POST", token: invitee.token }), "invitee mock payment");
   assert.equal(inviteePaid.subscription.status, "active");
+  const thirtyDayCycle = 30 * 24 * 60 * 60 * 1000;
+  const inviteeExpiryWindow = Date.parse(inviteePaid.subscription.expiresAt) - Date.now();
+  assert.ok(inviteeExpiryWindow > thirtyDayCycle - 2 * 60 * 1000 && inviteeExpiryWindow < thirtyDayCycle + 2 * 60 * 1000, "new subscriptions should expire after a fixed 30-day cycle");
   assert.match(inviteePaid.subscription.links.universal, /\/s\//);
   assert.ok(inviteePaid.subscription.links.universal.startsWith(baseUrl), "subscription links should use the configured public origin");
   const forwardedOriginSubscription = expectOk(await request("/api/subscription", { token: invitee.token, headers: { "X-Forwarded-Host": "malicious.example" } }), "subscription origin hardening");
