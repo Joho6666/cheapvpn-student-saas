@@ -40,8 +40,10 @@ Both packages intentionally exclude real `.env` files, local databases, Cloudfla
 3. Run `npm run dev:full`.
 4. Open `http://127.0.0.1:3000` for the user console and `http://127.0.0.1:3000/#admin` for operations.
 
+Official WeChat Native and Alipay face-to-face QR payments run on Express/SQLite only. See `docs/PAYMENT_SETUP.md` and `docs/PAYMENT_PRODUCTION_CHECKLIST.md`. Cloudflare Worker payment is not the production payment entry.
+
 Run `npm run test:mvp` for the isolated customer/admin flow, or `npm run test:payment` for the signed payment webhook flow. Both tests use temporary SQLite data and do not modify the local database.
-Run `npm run test:all` to execute the complete customer, payment, usage, security, order-concurrency, production-guard, and frontend-proxy regression suite.
+Run `npm run test:all` to execute the complete customer, payment, usage, security, order-concurrency, production-guard, and frontend-proxy regression suite. Native QR payment tests (`test:payment:wechat`, `test:payment:alipay`, `test:payment:idempotency`, `test:payment:security`, `test:payment:activation-recovery`) use mock providers and fixtures only; they never charge a real WeChat or Alipay account.
 
 The local test suite explicitly enables `ALLOW_PRIVATE_UPSTREAM_URLS=true` only for loopback fixtures. Production must leave it `false`; startup refuses to run when a production process tries to enable it. `GET /api/admin/metrics` is available to authenticated administrators and reports truthful UTC daily/monthly revenue, active subscriptions, expiring subscriptions, payment success rate, upstream sync failures, and open tickets.
 

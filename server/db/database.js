@@ -36,6 +36,14 @@ export function createDatabase({ dataDir }) {
       payment_reference TEXT NOT NULL, customer_note TEXT, submitted_at TEXT NOT NULL,
       FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY, order_id TEXT NOT NULL, provider TEXT NOT NULL,
+      provider_trade_no TEXT, provider_order_id TEXT, amount REAL NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'CNY', status TEXT NOT NULL,
+      qr_content TEXT, raw_status TEXT, last_query_at TEXT, last_error TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT, paid_at TEXT,
+      FOREIGN KEY(order_id) REFERENCES orders(id)
+    );
     CREATE TABLE IF NOT EXISTS subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL UNIQUE, plan_id INTEGER NOT NULL,
       source_id INTEGER, token TEXT NOT NULL UNIQUE, status TEXT NOT NULL, data_used_gb REAL NOT NULL DEFAULT 0,
@@ -131,6 +139,10 @@ export function createDatabase({ dataDir }) {
   addColumn("orders", "referral_id", "INTEGER");
   addColumn("orders", "expires_at", "TEXT");
   addColumn("orders", "client_request_id", "TEXT");
+  addColumn("orders", "activation_status", "TEXT NOT NULL DEFAULT 'none'");
+  addColumn("orders", "activation_error", "TEXT");
+  addColumn("orders", "activation_attempts", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("orders", "activation_next_retry_at", "TEXT");
   addColumn("referrals", "reward_used_at", "TEXT");
   for (const column of ["universal_url_encrypted", "clash_url_encrypted", "singbox_url_encrypted", "node_rules_json"]) {
     addColumn("upstream_sources", column, "TEXT");
@@ -145,6 +157,11 @@ export function createDatabase({ dataDir }) {
     CREATE INDEX IF NOT EXISTS idx_orders_pending_expiry ON orders(status, expires_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_user_request ON orders(user_id, client_request_id) WHERE client_request_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_payment_events_order ON payment_events(order_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status, expires_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_provider_trade_no ON payments(provider_trade_no) WHERE provider_trade_no IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_one_pending_per_order ON payments(order_id) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS idx_orders_activation_retry ON orders(status, activation_status, activation_next_retry_at);
     CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_user_id, status);
     CREATE INDEX IF NOT EXISTS idx_subscriptions_expiry ON subscriptions(status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_subscriptions_source_status ON subscriptions(source_id, status, updated_at);

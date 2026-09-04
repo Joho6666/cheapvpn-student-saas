@@ -14,7 +14,7 @@ import {
   configuredCorsOrigins, dataDir, emailFromDefault, host, nodeGeoTimeout,
   nodeProbeTimeout, nodeTestConcurrency, paymentCheckoutTemplateDefault,
   paymentManualInstructionsDefault, paymentMethodCatalog, paymentModeDefault,
-  paymentWebhookSecretDefault, port, productionRuntime, publicBaseUrl,
+  paymentProviderModeDefault, paymentWebhookSecretDefault, port, productionRuntime, publicBaseUrl,
   smtpUrlDefault, trustProxyHeaders, upstreamAssignmentDefault, upstreamSyncConcurrency,
   upstreamTimeout, upstreamUsageApiTokenDefault, upstreamUsageApiUrlDefault,
   upstreamUsageSyncIntervalDefault,
@@ -22,6 +22,9 @@ import {
 import { GenericSubscriptionProvider } from "./providers/generic-subscription.provider.js";
 import { validateRemoteUrl } from "./security/remote-fetch.js";
 import { logEvent } from "./observability/logger.js";
+import { createPaymentService, nativeProvidersReady } from "./payments/paymentService.js";
+import { createActivationRetryJob, nextRetryAt } from "./payments/retryJob.js";
+import { registerPaymentHttpRoutes } from "./payments/httpRoutes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let database = createDatabase({ dataDir });
@@ -36,6 +39,9 @@ let subscriptionProvider = new GenericSubscriptionProvider({
   allowPrivate: allowPrivateUpstreamUrls && !productionRuntime,
 });
 let injectedMailer = null;
+let paymentRuntime = null;
+let activationRetryJob = null;
+let activationRetryTimer = null;
 const sessions = new Map();
 const adminSessions = new Map();
 const geoMemoryCache = new Map();
@@ -60,7 +66,11 @@ const fromCents = (value) => Number(value || 0) / 100;
 function paymentIsReady(config = currentPaymentConfig()) {
   return (config.mode === "mock" && !productionRuntime)
     || (config.mode === "manual" && Boolean(config.manualInstructions))
-    || (config.mode === "webhook" && Boolean(config.webhookSecret) && validCheckoutTemplate(config.checkoutTemplate));
+    || (config.mode === "webhook" && Boolean(config.webhookSecret) && validCheckoutTemplate(config.checkoutTemplate))
+    || (config.mode === "wechat_alipay" && nativeProvidersReady({
+      providerMode: productionRuntime ? "live" : paymentProviderModeDefault,
+      production: productionRuntime,
+    }));
 }
 
 function isPlaceholderSecret(value) {
@@ -83,7 +93,9 @@ function encryptionKeyIsStrong() {
 
 function paymentIsReadyForProduction(config) {
   return paymentIsReady(config)
-    && (config.mode !== "webhook" || hasProductionSecret(config.webhookSecret));
+    && config.mode !== "mock"
+    && (config.mode !== "webhook" || hasProductionSecret(config.webhookSecret))
+    && (config.mode !== "wechat_alipay" || nativeProvidersReady({ providerMode: "live", production: true }));
 }
 
 function validCheckoutTemplate(value) {
@@ -180,8 +192,10 @@ function expirePendingOrders() {
   const recoveryCutoff = new Date(Date.now() - processingRecoveryMs).toISOString();
   db.prepare("UPDATE orders SET status = 'pending' WHERE status = 'processing' AND created_at <= ?")
     .run(recoveryCutoff);
-  return db.prepare("UPDATE orders SET status = 'expired' WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at <= ?")
+  const expired = db.prepare("UPDATE orders SET status = 'expired' WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at <= ?")
     .run(now()).changes;
+  if (paymentRuntime) void paymentRuntime.expireStalePayments();
+  return expired;
 }
 
 function activeSubscriptionOrError(userId) {
@@ -386,7 +400,7 @@ function encryptedSetting(key, fallback = "") {
 
 function currentPaymentConfig() {
   const storedMode = storedSetting("payment_mode");
-  const mode = ["mock", "manual", "webhook"].includes(storedMode) ? storedMode : paymentModeDefault;
+    const mode = ["mock", "manual", "webhook", "wechat_alipay"].includes(storedMode) ? storedMode : paymentModeDefault;
   let methodIds = ["wechat_pay", "alipay", "card"];
   try {
     const storedMethods = JSON.parse(storedSetting("payment_method_ids"));
@@ -1273,7 +1287,8 @@ app.use(cors({ origin: (origin, callback) => {
 // Usage imports can contain hundreds of customer records, while payment
 // webhook bodies remain small. Keep a bounded request size without rejecting
 // normal batch usage updates.
-app.use(express.json({ limit: "256kb", verify: (req, _res, buffer) => { req.rawBody = buffer; } }));
+  app.use(express.json({ limit: "256kb", verify: (req, _res, buffer) => { req.rawBody = buffer; } }));
+  app.use(express.urlencoded({ extended: false, verify: (req, _res, buffer) => { if (!req.rawBody) req.rawBody = buffer; } }));
 app.use((_req, res, next) => {
   res.set({
     "Content-Security-Policy": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://cdn.tailwindcss.com 'unsafe-inline'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'",
@@ -1293,6 +1308,10 @@ app.get("/health/ready", (_req, res) => {
     database: true,
     upstream: Boolean(sourceCount || configuredUpstreamUrl() || (allowDemoSubscription && !productionRuntime)),
     payment: payment.mode !== "mock" && (productionRuntime ? paymentIsReadyForProduction(payment) : paymentIsReady(payment)),
+    payment_provider_not_ready: !(payment.mode === "wechat_alipay" && !nativeProvidersReady({
+      providerMode: productionRuntime ? "live" : paymentProviderModeDefault,
+      production: productionRuntime,
+    })),
     encryption: productionRuntime ? encryptionKeyIsStrong() : Boolean(process.env.ADMIN_ENCRYPTION_KEY),
     adminPassword: adminPasswordIsStrong(),
     demoAccountDisabled: !allowDemoAccount,
@@ -1392,7 +1411,7 @@ app.get("/api/admin/system", adminAuth, (_req, res) => {
   const enabledSourceCount = db.prepare("SELECT COUNT(*) AS count FROM upstream_sources WHERE enabled = 1").get().count;
   res.json({
     publicBaseUrl,
-    payment: { mode: payment.mode, ready: paymentIsReady(payment), productionReady: payment.mode !== "mock" && paymentIsReady(payment), checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret), manualInstructionsConfigured: Boolean(payment.manualInstructions) },
+    payment: { mode: payment.mode, ready: paymentIsReady(payment), productionReady: payment.mode !== "mock" && paymentIsReadyForProduction(payment), checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret), manualInstructionsConfigured: Boolean(payment.manualInstructions), providers: paymentRuntime?.enabledProviders() || [], providerMode: paymentRuntime?.providerMode() || paymentProviderModeDefault },
     upstream: { configured: sourceCount > 0, total: sourceCount, enabled: enabledSourceCount, assignmentMode: currentUpstreamAssignmentMode() },
     usage: { apiConfigured: Boolean(currentUsageApiConfig().url), automaticSync: Boolean(currentUsageApiConfig().url && currentUsageSyncInterval() >= 30 * 1000), syncIntervalMs: currentUsageSyncInterval() },
     email: { configured: validSmtpUrl(currentEmailConfig().smtpUrl) && Boolean(currentEmailConfig().from) },
@@ -1536,7 +1555,7 @@ app.put("/api/admin/settings/payment", adminAuth, (req, res, next) => {
     const methodIds = Array.isArray(req.body?.methodIds)
       ? [...new Set(req.body.methodIds.map((value) => String(value)).filter((value) => paymentMethodCatalog.some((method) => method.id === value)))].slice(0, paymentMethodCatalog.length)
       : current.methods.map((method) => method.id);
-    if (!["mock", "manual", "webhook"].includes(mode)) throw apiError("INVALID_PAYMENT_MODE", "Payment mode must be mock, manual or webhook");
+    if (!["mock", "manual", "webhook", "wechat_alipay"].includes(mode)) throw apiError("INVALID_PAYMENT_MODE", "Payment mode must be mock, manual, webhook or wechat_alipay");
     if (!methodIds.length) throw apiError("PAYMENT_METHOD_REQUIRED", "Select at least one payment method");
     if (checkoutTemplate && !validCheckoutTemplate(checkoutTemplate)) {
       throw apiError("INVALID_CHECKOUT_URL", "Checkout URL template must be a valid http or https URL");
@@ -1924,7 +1943,14 @@ app.post("/api/admin/orders/:id/confirm", adminAuth, async (req, res, next) => {
     expirePendingOrders();
     const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
     if (!order) throw apiError("ORDER_NOT_FOUND", "Order was not found", 404);
-    if (order.status === "paid") return res.json({ ok: true, alreadyPaid: true, orderId: order.id });
+    if (order.status === "paid") {
+      if (order.activation_status !== "active") {
+        const retried = await paymentRuntime.fulfill({ order });
+        if (retried.activationError) throw retried.activationError;
+        return res.json({ ok: true, alreadyPaid: true, retried: true, orderId: order.id, subscription: retried.subscription });
+      }
+      return res.json({ ok: true, alreadyPaid: true, orderId: order.id });
+    }
     if (order.status !== "pending") throw apiError("ORDER_NOT_CONFIRMABLE", "Only pending orders can be confirmed", 409);
     const claim = db.prepare("UPDATE orders SET status = 'processing' WHERE id = ? AND status = 'pending'").run(order.id);
     if (claim.changes !== 1) throw apiError("ORDER_PROCESSING", "Order confirmation is already in progress", 409);
@@ -2492,7 +2518,20 @@ app.get("/api/config", (_req, res) => {
 
 app.get("/api/payment/config", auth, (_req, res) => {
   const payment = currentPaymentConfig();
-  res.json({ mode: payment.mode, mock: payment.mode === "mock", manual: payment.mode === "manual", webhook: payment.mode === "webhook", ready: paymentIsReady(payment), checkoutConfigured: Boolean(payment.checkoutTemplate), webhookConfigured: Boolean(payment.webhookSecret), manualInstructions: payment.mode === "manual" ? payment.manualInstructions : "", methods: payment.methods });
+  res.json({
+    mode: payment.mode,
+    mock: payment.mode === "mock",
+    manual: payment.mode === "manual",
+    webhook: payment.mode === "webhook",
+    wechatAlipay: payment.mode === "wechat_alipay",
+    ready: paymentIsReady(payment),
+    checkoutConfigured: Boolean(payment.checkoutTemplate),
+    webhookConfigured: Boolean(payment.webhookSecret),
+    manualInstructions: payment.mode === "manual" ? payment.manualInstructions : "",
+    methods: payment.methods,
+    providers: paymentRuntime?.enabledProviders() || [],
+    providerMode: paymentRuntime?.providerMode() || paymentProviderModeDefault,
+  });
 });
 
 function customerOrderView(order) {
@@ -2503,68 +2542,118 @@ function customerOrderView(order) {
   };
 }
 
-async function completeOrder(order, baseUrl = publicBaseUrl) {
-  const plan = db.prepare("SELECT * FROM plans WHERE id = ?").get(order.plan_id);
-  if (!plan) throw apiError("PLAN_NOT_FOUND", "Order plan was not found", 404);
-  const existingSubscription = currentSubscription(order.user_id);
-  const expiresAt = new Date();
-  if (order.kind === "renewal") {
-    const existingExpiry = existingSubscription ? expirationMillis(existingSubscription.expires_at) : 0;
-    expiresAt.setTime(Math.max(Date.now(), existingExpiry));
+async function activatePaidOrder(order, baseUrl = publicBaseUrl) {
+  const latest = db.prepare("SELECT * FROM orders WHERE id = ?").get(order.id);
+  if (!latest || latest.status !== "paid") throw apiError("ORDER_NOT_CONFIRMABLE", "Order cannot be confirmed", 409);
+  if (latest.activation_status === "active") {
+    const existing = currentSubscription(latest.user_id);
+    if (!existing) throw apiError("ORDER_SUBSCRIPTION_MISSING", "Paid order has no subscription", 409);
+    return { order: latest, subscription: subscriptionView(existing, currentPlan(existing), baseUrl) };
   }
-  expiresAt.setTime(addBillingPeriods(expiresAt, Number(plan.billing_period_months || 1)).getTime());
-  // The primary source remains for compatibility and routing reports. Pool members
-  // are merged into the customer-facing subscription content.
-  const assignedRenewalSource = order.kind === "renewal" && existingSubscription?.source_id ? sourceById(existingSubscription.source_id) : null;
-  const selectedSource = order.kind === "renewal" && existingSubscription?.source_id
-    ? (assignedRenewalSource?.enabled ? assignedRenewalSource : null) || sourceForNewSubscription(order.user_id)
-    : sourceForNewSubscription(order.user_id);
-  const candidatePool = existingSubscription?.pool_id ? poolById(existingSubscription.pool_id) : poolForNewSubscription();
-  // Empty pools must not suppress the established local demo subscription path.
-  // In production this still fails closed because demo subscriptions are disabled.
-  const selectedPool = candidatePool && poolMembers(candidatePool.id, { onlyHealthyCandidates: true }).length ? candidatePool : null;
-  if (!selectedSource && !selectedPool && !configuredUpstreamUrl() && (!allowDemoSubscription || productionRuntime)) {
-    throw apiError("UPSTREAM_NOT_CONFIGURED", "Configure an upstream source before activating a customer subscription", 503);
+  const claim = db.prepare(`UPDATE orders SET activation_status = 'activating'
+    WHERE id = ? AND status = 'paid' AND activation_status IN ('none', 'pending', 'retrying', 'failed')`).run(latest.id);
+  if (claim.changes !== 1) {
+    const current = db.prepare("SELECT * FROM orders WHERE id = ?").get(latest.id);
+    if (current?.activation_status === "active") {
+      const existing = currentSubscription(current.user_id);
+      return { order: current, subscription: subscriptionView(existing, currentPlan(existing), baseUrl) };
+    }
+    throw apiError("ORDER_PROCESSING", "Order confirmation is already in progress", 409);
   }
-  const poolResult = selectedPool ? await collectPoolSubscriptionFormats(selectedPool) : null;
-  const { universal, clash, singbox, warnings } = poolResult || await fetchSubscriptionFormats(selectedSource?.id);
-  const primarySourceId = selectedSource?.id || universal.sourceId;
-  const timestamp = now();
-  const transaction = db.transaction(() => {
-    db.prepare("UPDATE orders SET status = 'paid', confirmed_at = ? WHERE id = ? AND status = 'processing'").run(timestamp, order.id);
-    db.prepare(`INSERT INTO subscriptions
-      (user_id, plan_id, source_id, pool_id, token, status, usage_source, upstream_used_gb, upstream_total_gb, upstream_expires_at, upstream_synced_at, expires_at, last_sync_at, last_sync_status,
-       universal_content, clash_content, singbox_content, created_at, updated_at)
-      VALUES (@userId, @planId, @sourceId, @poolId, @token, 'active', @usageSource, @upstreamUsed, @upstreamTotal, @upstreamExpires, @upstreamSynced, @expiresAt, @lastSyncAt, @lastSyncStatus, @universal, @clash, @singbox, @createdAt, @updatedAt)
-      ON CONFLICT(user_id) DO UPDATE SET plan_id = excluded.plan_id, source_id = excluded.source_id, pool_id = excluded.pool_id, token = excluded.token,
-        status = 'active', data_used_gb = 0, usage_source = excluded.usage_source, upstream_used_gb = excluded.upstream_used_gb,
-        upstream_total_gb = excluded.upstream_total_gb, upstream_expires_at = excluded.upstream_expires_at,
-        upstream_synced_at = excluded.upstream_synced_at, expires_at = excluded.expires_at, last_sync_at = excluded.last_sync_at,
-        last_sync_status = excluded.last_sync_status, universal_content = excluded.universal_content,
-        clash_content = excluded.clash_content, singbox_content = excluded.singbox_content, updated_at = excluded.updated_at`).run({
-      userId: order.user_id, planId: plan.id, sourceId: primarySourceId, poolId: selectedPool?.id || null,
-      token: order.kind === "renewal" && existingSubscription ? existingSubscription.token : subscriptionToken(),
-      usageSource: universal.usage ? "upstream-aggregate" : "manual", upstreamUsed: universal.usage?.usedGb ?? null,
-      upstreamTotal: universal.usage?.totalGb ?? null, upstreamExpires: universal.usage?.expiresAt ?? null,
-      upstreamSynced: universal.usage ? timestamp : null, expiresAt: expiresAt.toISOString(), lastSyncAt: timestamp,
-      lastSyncStatus: warnings.length ? "partial" : universal.source, universal: universal.content, clash: clash.content,
-      singbox: singbox.content, createdAt: timestamp, updatedAt: timestamp,
-    });
-    db.prepare(`UPDATE referrals SET status = 'qualified', qualified_at = ?
-      WHERE referred_user_id = ? AND status = 'registered'`).run(timestamp, order.user_id);
-    if (order.referral_id) db.prepare("UPDATE referrals SET reward_used_at = ? WHERE id = ? AND status = 'qualified' AND reward_used_at IS NULL").run(timestamp, order.referral_id);
-  });
-  transaction();
-  const subscription = currentSubscription(order.user_id);
-  if (selectedPool) {
-    ensureSubscriptionSourceAssignments(subscription.id, selectedPool.id, primarySourceId);
-    persistPoolSourceStates(subscription.id, poolResult.sourceResults, timestamp);
-    recordPoolSyncRun({ poolId: selectedPool.id, subscriptionId: subscription.id, status: warnings.length ? "partial" : "ok", stats: poolResult.stats, startedAt: timestamp });
+  try {
+    const plan = db.prepare("SELECT * FROM plans WHERE id = ?").get(latest.plan_id);
+    if (!plan) throw apiError("PLAN_NOT_FOUND", "Order plan was not found", 404);
+    const existingSubscription = currentSubscription(latest.user_id);
+    const expiresAt = new Date();
+    if (latest.kind === "renewal") {
+      const existingExpiry = existingSubscription ? expirationMillis(existingSubscription.expires_at) : 0;
+      expiresAt.setTime(Math.max(Date.now(), existingExpiry));
+    }
+    expiresAt.setTime(addBillingPeriods(expiresAt, Number(plan.billing_period_months || 1)).getTime());
+    const assignedRenewalSource = latest.kind === "renewal" && existingSubscription?.source_id ? sourceById(existingSubscription.source_id) : null;
+    const selectedSource = latest.kind === "renewal" && existingSubscription?.source_id
+      ? (assignedRenewalSource?.enabled ? assignedRenewalSource : null) || sourceForNewSubscription(latest.user_id)
+      : sourceForNewSubscription(latest.user_id);
+    const candidatePool = existingSubscription?.pool_id ? poolById(existingSubscription.pool_id) : poolForNewSubscription();
+    const selectedPool = candidatePool && poolMembers(candidatePool.id, { onlyHealthyCandidates: true }).length ? candidatePool : null;
+    if (!selectedSource && !selectedPool && !configuredUpstreamUrl() && (!allowDemoSubscription || productionRuntime)) {
+      throw apiError("UPSTREAM_NOT_CONFIGURED", "Configure an upstream source before activating a customer subscription", 503);
+    }
+    const poolResult = selectedPool ? await collectPoolSubscriptionFormats(selectedPool) : null;
+    const { universal, clash, singbox, warnings } = poolResult || await fetchSubscriptionFormats(selectedSource?.id);
+    const primarySourceId = selectedSource?.id || universal.sourceId;
+    const timestamp = now();
+    db.transaction(() => {
+      db.prepare(`INSERT INTO subscriptions
+        (user_id, plan_id, source_id, pool_id, token, status, usage_source, upstream_used_gb, upstream_total_gb, upstream_expires_at, upstream_synced_at, expires_at, last_sync_at, last_sync_status,
+         universal_content, clash_content, singbox_content, created_at, updated_at)
+        VALUES (@userId, @planId, @sourceId, @poolId, @token, 'active', @usageSource, @upstreamUsed, @upstreamTotal, @upstreamExpires, @upstreamSynced, @expiresAt, @lastSyncAt, @lastSyncStatus, @universal, @clash, @singbox, @createdAt, @updatedAt)
+        ON CONFLICT(user_id) DO UPDATE SET plan_id = excluded.plan_id, source_id = excluded.source_id, pool_id = excluded.pool_id, token = excluded.token,
+          status = 'active', data_used_gb = 0, usage_source = excluded.usage_source, upstream_used_gb = excluded.upstream_used_gb,
+          upstream_total_gb = excluded.upstream_total_gb, upstream_expires_at = excluded.upstream_expires_at,
+          upstream_synced_at = excluded.upstream_synced_at, expires_at = excluded.expires_at, last_sync_at = excluded.last_sync_at,
+          last_sync_status = excluded.last_sync_status, universal_content = excluded.universal_content,
+          clash_content = excluded.clash_content, singbox_content = excluded.singbox_content, updated_at = excluded.updated_at`).run({
+        userId: latest.user_id, planId: plan.id, sourceId: primarySourceId, poolId: selectedPool?.id || null,
+        token: latest.kind === "renewal" && existingSubscription ? existingSubscription.token : subscriptionToken(),
+        usageSource: universal.usage ? "upstream-aggregate" : "manual", upstreamUsed: universal.usage?.usedGb ?? null,
+        upstreamTotal: universal.usage?.totalGb ?? null, upstreamExpires: universal.usage?.expiresAt ?? null,
+        upstreamSynced: universal.usage ? timestamp : null, expiresAt: expiresAt.toISOString(), lastSyncAt: timestamp,
+        lastSyncStatus: warnings.length ? "partial" : universal.source, universal: universal.content, clash: clash.content,
+        singbox: singbox.content, createdAt: timestamp, updatedAt: timestamp,
+      });
+      db.prepare(`UPDATE referrals SET status = 'qualified', qualified_at = ?
+        WHERE referred_user_id = ? AND status = 'registered'`).run(timestamp, latest.user_id);
+      if (latest.referral_id) db.prepare("UPDATE referrals SET reward_used_at = ? WHERE id = ? AND status = 'qualified' AND reward_used_at IS NULL").run(timestamp, latest.referral_id);
+      db.prepare("UPDATE orders SET activation_status = 'active', activation_error = NULL, activation_next_retry_at = NULL WHERE id = ? AND status = 'paid'")
+        .run(latest.id);
+    })();
+    const subscription = currentSubscription(latest.user_id);
+    if (selectedPool) {
+      ensureSubscriptionSourceAssignments(subscription.id, selectedPool.id, primarySourceId);
+      persistPoolSourceStates(subscription.id, poolResult.sourceResults, timestamp);
+      recordPoolSyncRun({ poolId: selectedPool.id, subscriptionId: subscription.id, status: warnings.length ? "partial" : "ok", stats: poolResult.stats, startedAt: timestamp });
+    }
+    recordUsageSnapshot(subscription, timestamp);
+    logEvent("subscription.activated", { userId: latest.user_id, orderId: latest.id, sourceId: subscription.source_id, status: "active", success: true });
+    return { order: { ...latest, status: "paid", activation_status: "active", confirmedAt: latest.confirmed_at || timestamp }, subscription: subscriptionView(subscription, currentPlan(subscription), baseUrl) };
+  } catch (error) {
+    const attempts = Number(latest.activation_attempts || 0) + 1;
+    const failed = attempts >= 8;
+    db.prepare(`UPDATE orders SET activation_status = ?, activation_error = ?, activation_attempts = ?, activation_next_retry_at = ?
+      WHERE id = ? AND status = 'paid'`).run(failed ? "failed" : "retrying", String(error.message || error).slice(0, 500), attempts, failed ? null : nextRetryAt(attempts), latest.id);
+    throw error;
   }
-  recordUsageSnapshot(subscription, timestamp);
-  logEvent("subscription.activated", { userId: order.user_id, orderId: order.id, sourceId: subscription.source_id, status: "active", success: true });
-  return { order: { ...order, status: "paid", confirmedAt: timestamp }, subscription: subscriptionView(subscription, currentPlan(subscription), baseUrl) };
 }
+
+paymentRuntime = createPaymentService({
+  db, now, toCents, apiError, logEvent, activatePaidOrder,
+});
+activationRetryJob = createActivationRetryJob({ db, now, activatePaidOrder, logEvent });
+
+async function completeOrder(order, baseUrl = publicBaseUrl) {
+  const paid = paymentRuntime.completePayment({
+    provider: "manual",
+    orderId: order.id,
+    amount: order.amount,
+    paidAt: now(),
+    eventId: `complete:${order.id}`,
+  });
+  const fulfilled = await paymentRuntime.fulfill(paid, baseUrl);
+  if (fulfilled.activationError) throw fulfilled.activationError;
+  if (!fulfilled.subscription) throw apiError("ORDER_SUBSCRIPTION_MISSING", "Paid order has no subscription", 409);
+  return { order: { ...fulfilled.order, status: "paid", confirmedAt: fulfilled.order.confirmed_at || now() }, subscription: fulfilled.subscription };
+}
+
+registerPaymentHttpRoutes(app, { auth, adminAuth, rateLimit, apiError, productionRuntime, paymentRuntime, db, now });
+app.post("/api/webhooks/payment", rateLimit({ name: "payment-webhook-native", max: 120, windowMs: 60 * 1000 }), async (req, res, next) => {
+  try {
+    res.json(await paymentRuntime.handleHmacWebhook(req, {
+      webhookSecret: currentPaymentConfig().webhookSecret,
+      expirePendingOrders,
+    }));
+  } catch (error) { next(error); }
+});
 
 app.post("/api/orders", auth, (req, res, next) => {
   try {
@@ -2590,6 +2679,8 @@ app.post("/api/orders", auth, (req, res, next) => {
     if (!renewal && subscription?.status === "active") throw apiError("SUBSCRIPTION_ALREADY_ACTIVE", "Subscription is already active; create a renewal order instead", 409);
     if (renewal && !subscription) throw apiError("SUBSCRIPTION_NOT_FOUND", "No subscription to renew", 404);
     expirePendingOrders();
+    const unpaidActivation = db.prepare(`SELECT id FROM orders WHERE user_id = ? AND status = 'paid' AND activation_status != 'active' LIMIT 1`).get(req.user.id);
+    if (unpaidActivation) throw apiError("ACTIVATION_PENDING", "A paid order is still being activated. Retry activation before creating another order.", 409);
     const pending = db.prepare("SELECT id, amount, kind, discount_percent, created_at FROM orders WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").get(req.user.id);
     if (pending) throw apiError("PENDING_ORDER_EXISTS", `There is already a pending ${pending.kind} order. Cancel it before creating another order.`, 409);
     const eligibleReferral = renewal ? db.prepare(`SELECT id, reward_percent FROM referrals
@@ -2616,12 +2707,12 @@ app.post("/api/orders", auth, (req, res, next) => {
 
 app.get("/api/orders", auth, (req, res) => {
   expirePendingOrders();
-  const orders = db.prepare(`SELECT o.id, o.amount, o.status, o.kind, o.discount_percent, o.expires_at, o.created_at, o.confirmed_at,
+  const orders = db.prepare(`SELECT o.id, o.amount, o.status, o.kind, o.discount_percent, o.expires_at, o.created_at, o.confirmed_at, o.activation_status,
     p.name AS plan_name, ps.payment_method, ps.payment_reference, ps.customer_note, ps.submitted_at
     FROM orders o JOIN plans p ON p.id = o.plan_id LEFT JOIN payment_submissions ps ON ps.order_id = o.id
     WHERE o.user_id = ? ORDER BY o.created_at DESC`).all(req.user.id).map((order) => ({
       id: order.id, amount: order.amount, status: order.status, kind: order.kind, discountPercent: order.discount_percent, expiresAt: order.expires_at, checkoutUrl: checkoutUrlFor(order), planName: order.plan_name,
-      createdAt: order.created_at, confirmedAt: order.confirmed_at,
+      createdAt: order.created_at, confirmedAt: order.confirmed_at, activationStatus: order.activation_status || "none",
       paymentSubmission: order.submitted_at ? { method: order.payment_method, reference: order.payment_reference, note: order.customer_note || "", submittedAt: order.submitted_at } : null,
     }));
   res.json({ orders });
@@ -2630,7 +2721,7 @@ app.get("/api/orders", auth, (req, res) => {
 app.get("/api/orders/:id", auth, (req, res, next) => {
   try {
     expirePendingOrders();
-    const order = db.prepare(`SELECT o.id, o.amount, o.status, o.kind, o.discount_percent, o.expires_at, o.created_at, o.confirmed_at,
+    const order = db.prepare(`SELECT o.id, o.amount, o.status, o.kind, o.discount_percent, o.expires_at, o.created_at, o.confirmed_at, o.activation_status,
       p.name AS plan_name, ps.payment_method, ps.payment_reference, ps.customer_note, ps.submitted_at
       FROM orders o JOIN plans p ON p.id = o.plan_id LEFT JOIN payment_submissions ps ON ps.order_id = o.id
       WHERE o.id = ? AND o.user_id = ?`).get(req.params.id, req.user.id);
@@ -2639,7 +2730,7 @@ app.get("/api/orders/:id", auth, (req, res, next) => {
       id: order.id, amount: order.amount, status: order.status, kind: order.kind,
       discountPercent: order.discount_percent, expiresAt: order.expires_at,
       checkoutUrl: checkoutUrlFor(order), planName: order.plan_name,
-      createdAt: order.created_at, confirmedAt: order.confirmed_at,
+      createdAt: order.created_at, confirmedAt: order.confirmed_at, activationStatus: order.activation_status || "none",
       paymentSubmission: order.submitted_at ? { method: order.payment_method, reference: order.payment_reference, note: order.customer_note || "", submittedAt: order.submitted_at } : null,
     } });
   } catch (error) { next(error); }
@@ -2667,11 +2758,12 @@ app.post("/api/orders/:id/payment-submission", auth, (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/orders/:id/cancel", auth, (req, res, next) => {
+app.post("/api/orders/:id/cancel", auth, async (req, res, next) => {
   try {
     const result = db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ? AND user_id = ? AND status = 'pending'")
       .run(req.params.id, req.user.id);
     if (result.changes !== 1) throw apiError("ORDER_NOT_CANCELLABLE", "Only your pending orders can be cancelled", 409);
+    if (paymentRuntime) await paymentRuntime.closeOrderPayments(req.params.id);
     res.json({ ok: true, orderId: req.params.id, status: "cancelled" });
   } catch (error) { next(error); }
 });
@@ -2926,6 +3018,11 @@ export function createApp({ database: injectedDatabase, provider, mailer } = {})
 export function startBackgroundJobs() {
   scheduleProviderUsageSync();
   scheduleResourcePoolSync();
+  if (activationRetryTimer) clearInterval(activationRetryTimer);
+  activationRetryTimer = setInterval(() => {
+    activationRetryJob?.runDueRetries().catch(() => undefined);
+  }, 60 * 1000);
+  activationRetryTimer.unref?.();
 }
 
 export function stopBackgroundJobs() {
@@ -2933,6 +3030,8 @@ export function stopBackgroundJobs() {
   providerUsageSyncTimer = null;
   if (resourcePoolSyncTimer) clearInterval(resourcePoolSyncTimer);
   resourcePoolSyncTimer = null;
+  if (activationRetryTimer) clearInterval(activationRetryTimer);
+  activationRetryTimer = null;
 }
 
 export function closeDatabase() {

@@ -1,5 +1,6 @@
 import QRCode from "qrcode";
 import { createApiClient } from "./api/client.js";
+import { drawPaymentQr, paymentModalHtml, paymentPollDelay } from "./payment-modal.js";
 
 const state = {
   view: "overview",
@@ -20,6 +21,7 @@ const state = {
   paymentMode: "mock",
   paymentConfig: null,
   selectedPaymentMethod: "",
+  paymentSession: null,
   demoEnabled: false,
   authToken: localStorage.getItem("cheapvpn_session"),
   loading: true,
@@ -46,6 +48,8 @@ const adminState = {
   paymentSettings: null,
   emailSettings: null,
   usageSettings: null,
+  payments: [],
+  paymentSummary: null,
 };
 
 const API_BASE = `${window.location.origin}/api`;
@@ -58,6 +62,7 @@ const apiClient = createApiClient({
 const apiRequest = (path, options = {}) => apiClient.request(path, options);
 const adminApiRequest = (path, options = {}) => apiClient.adminRequest(path, options);
 let orderPollTimer = null;
+let paymentPollTimer = null;
 let remoteRefreshTimer = null;
 let remoteRefreshInFlight = false;
 let buyInFlight = false;
@@ -398,10 +403,43 @@ function render() {
     </div>
   `;
   bindEvents();
+  if (state.paymentSession) {
+    document.body.insertAdjacentHTML("beforeend", paymentModalHtml({
+      order: state.paymentSession.order,
+      payment: state.paymentSession.payment,
+      planName: state.paymentSession.planName || state.plan?.name,
+      links: subLinks(),
+    }));
+    bindPaymentModal();
+    drawPaymentQr(QRCode, document.querySelector("#payment-qr-canvas"), state.paymentSession.payment?.qrContent).catch(() => undefined);
+  }
   if (state.view === "subscription" && hasActiveSubscription()) renderSubscriptionQr();
 }
 
+function schedulePaymentPolling() {
+  if (paymentPollTimer) {
+    clearTimeout(paymentPollTimer);
+    paymentPollTimer = null;
+  }
+  const session = state.paymentSession;
+  if (!state.authToken || !session?.payment?.paymentId || ["active", "failed", "expired"].includes(session.payment.status)) return;
+  paymentPollTimer = setTimeout(async () => {
+    paymentPollTimer = null;
+    try {
+      const result = await apiRequest(`/payments/${encodeURIComponent(session.payment.paymentId)}/status`);
+      state.paymentSession = { ...session, payment: result };
+      if (result.status === "active") {
+        await loadRemoteState();
+        showToast("支付成功，套餐已开通");
+      } else {
+        render();
+      }
+    } catch { /* Keep the QR visible; the next poll can retry. */ }
+  }, paymentPollDelay(document.hidden));
+}
+
 function scheduleOrderPolling() {
+  schedulePaymentPolling();
   if (orderPollTimer) {
     clearTimeout(orderPollTimer);
     orderPollTimer = null;
@@ -450,7 +488,7 @@ function renderAdminApp() {
     bindAdminLogin();
     return;
   }
-  const views = { overview: renderAdminOverview, users: renderAdminUsers, orders: renderAdminOrders, tickets: renderAdminTickets, plans: renderAdminPlans, upstream: renderAdminUpstream };
+  const views = { overview: renderAdminOverview, users: renderAdminUsers, orders: renderAdminOrders, payments: renderAdminPayments, tickets: renderAdminTickets, plans: renderAdminPlans, upstream: renderAdminUpstream };
   document.querySelector("#app").innerHTML = `
     <div class="admin-shell">
       <aside class="admin-sidebar">
@@ -460,6 +498,7 @@ function renderAdminApp() {
           ${adminNav("overview", "space_dashboard", "概览")}
           ${adminNav("users", "groups", "用户与用量")}
           ${adminNav("orders", "receipt_long", "订单")}
+          ${adminNav("payments", "payments", "支付")}
           ${adminNav("tickets", "support_agent", "工单")}
           ${adminNav("plans", "sell", "套餐")}
           ${adminNav("upstream", "key_vertical", "资源配置")}
@@ -467,7 +506,7 @@ function renderAdminApp() {
         <div class="admin-sidebar-foot"><span class="admin-pulse"></span>API online<div class="admin-sidebar-note">管理员模式<br />上游凭证仅在服务端保存</div></div>
       </aside>
       <main class="admin-main">
-        <header class="admin-topbar"><div><span class="admin-eyebrow">CHEAPVPN / ADMIN</span><h1>${adminState.view === "overview" ? "运营概览" : adminState.view === "users" ? "用户与用量" : adminState.view === "orders" ? "订单管理" : adminState.view === "tickets" ? "客户工单" : adminState.view === "plans" ? "套餐管理" : "资源配置"}</h1></div><div class="admin-top-actions"><span class="admin-date">${new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" })}</span><button class="admin-ghost" id="admin-change-password">修改密码</button><button class="admin-ghost" id="admin-logout">退出后台</button></div></header>
+        <header class="admin-topbar"><div><span class="admin-eyebrow">CHEAPVPN / ADMIN</span><h1>${adminState.view === "overview" ? "运营概览" : adminState.view === "users" ? "用户与用量" : adminState.view === "orders" ? "订单管理" : adminState.view === "payments" ? "支付管理" : adminState.view === "tickets" ? "客户工单" : adminState.view === "plans" ? "套餐管理" : "资源配置"}</h1></div><div class="admin-top-actions"><span class="admin-date">${new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" })}</span><button class="admin-ghost" id="admin-change-password">修改密码</button><button class="admin-ghost" id="admin-logout">退出后台</button></div></header>
         ${views[adminState.view]()}
       </main>
     </div>
@@ -544,7 +583,13 @@ function renderAdminPaymentConfig() {
   const payment = adminState.system?.payment || {};
   const settings = adminState.paymentSettings || {};
   const email = adminState.emailSettings || {};
-  return `<div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">PAYMENT SETTINGS</span><h3>下单与收款配置</h3></div><span class="admin-status ${payment.productionReady ? "good" : "warn"}"><i></i>${payment.productionReady ? "生产就绪" : "待配置"}</span></div><p class="admin-form-hint">人工收款可立即使用。自动开通需由支付平台向 <code>${escapeHtml((adminState.system?.publicBaseUrl || window.location.origin).replace(/\/$/, ""))}/api/webhooks/payment</code> 发送通用 HMAC-SHA256 回调；不同平台如采用专用签名格式，需要另做适配。</p><form id="payment-config-form" class="admin-form grid md:grid-cols-2 gap-4"><label>支付模式<select id="payment-mode"><option value="mock" ${payment.mode === "mock" ? "selected" : ""}>模拟支付（仅开发）</option><option value="manual" ${payment.mode === "manual" ? "selected" : ""}>人工收款</option><option value="webhook" ${payment.mode === "webhook" ? "selected" : ""}>通用签名 Webhook</option></select></label><label>收银页地址模板<input id="payment-checkout-template" type="text" inputmode="url" value="${escapeHtml(settings.checkoutTemplate || "")}" placeholder="https://pay.example/checkout?order_id={orderId}&amount={amount}" autocomplete="off" /></label><label class="md:col-span-2">人工收款说明<textarea id="payment-manual-instructions" rows="3" placeholder="例如：请转账后把订单号发给客服。">${escapeHtml(settings.manualInstructions || "")}</textarea></label><label>Webhook 密钥<input id="payment-webhook-secret" type="password" placeholder="留空保持当前密钥" autocomplete="new-password" /></label><label class="flex items-center gap-2"><input id="payment-clear-secret" type="checkbox" />清除当前 Webhook 密钥</label><div class="admin-config-actions md:col-span-2"><button class="admin-outline" type="submit">保存支付配置</button><span class="admin-form-hint" id="payment-config-hint">当前模式：${escapeHtml(payment.mode || "mock")} · 收银页${payment.checkoutConfigured ? "已配置" : "未配置"} · Webhook 密钥${payment.webhookConfigured ? "已配置" : "未配置"}</span></div></form></div><div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">ACCOUNT RECOVERY</span><h3>找回密码邮件</h3></div><span class="admin-status ${email.configured ? "good" : "warn"}"><i></i>${email.configured ? "已配置" : "待配置"}</span></div><p class="admin-form-hint">本地 Express 使用 SMTP，Cloudflare 使用 Resend；凭证均只在服务端保存。</p><form id="email-config-form" class="admin-form grid md:grid-cols-2 gap-4"><label>SMTP 地址（本地 Express）<input id="email-smtp-url" type="url" placeholder="smtp://user:password@smtp.example.com:587" autocomplete="off" /></label><label>Resend API Key（Cloudflare）<input id="email-resend-api-key" type="password" placeholder="留空保持当前密钥" autocomplete="new-password" /></label><label>发件人<input id="email-from" value="${escapeHtml(email.from || "")}" placeholder="CheapVPN <support@example.com>" autocomplete="off" /></label><div class="admin-config-actions"><button class="admin-outline" type="submit">保存邮件设置</button><span class="admin-form-hint" id="email-config-hint">${email.configured ? "密码找回邮件已就绪" : "请配置对应部署方式的邮件凭证"}</span></div></form></div>`;
+  return `<div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">PAYMENT SETTINGS</span><h3>下单与收款配置</h3></div><span class="admin-status ${payment.productionReady ? "good" : "warn"}"><i></i>${payment.productionReady ? "生产就绪" : "待配置"}</span></div><p class="admin-form-hint">人工收款可立即使用。自动开通需由支付平台向 <code>${escapeHtml((adminState.system?.publicBaseUrl || window.location.origin).replace(/\/$/, ""))}/api/webhooks/payment</code> 发送通用 HMAC-SHA256 回调；不同平台如采用专用签名格式，需要另做适配。</p><form id="payment-config-form" class="admin-form grid md:grid-cols-2 gap-4"><label>支付模式<select id="payment-mode"><option value="mock" ${payment.mode === "mock" ? "selected" : ""}>模拟支付（仅开发）</option><option value="manual" ${payment.mode === "manual" ? "selected" : ""}>人工收款</option><option value="webhook" ${payment.mode === "webhook" ? "selected" : ""}>通用签名 Webhook</option><option value="wechat_alipay" ${payment.mode === "wechat_alipay" ? "selected" : ""}>微信/支付宝扫码</option></select></label><label>收银页地址模板<input id="payment-checkout-template" type="text" inputmode="url" value="${escapeHtml(settings.checkoutTemplate || "")}" placeholder="https://pay.example/checkout?order_id={orderId}&amount={amount}" autocomplete="off" /></label><label class="md:col-span-2">人工收款说明<textarea id="payment-manual-instructions" rows="3" placeholder="例如：请转账后把订单号发给客服。">${escapeHtml(settings.manualInstructions || "")}</textarea></label><label>Webhook 密钥<input id="payment-webhook-secret" type="password" placeholder="留空保持当前密钥" autocomplete="new-password" /></label><label class="flex items-center gap-2"><input id="payment-clear-secret" type="checkbox" />清除当前 Webhook 密钥</label><div class="admin-config-actions md:col-span-2"><button class="admin-outline" type="submit">保存支付配置</button><span class="admin-form-hint" id="payment-config-hint">当前模式：${escapeHtml(payment.mode || "mock")} · 收银页${payment.checkoutConfigured ? "已配置" : "未配置"} · Webhook 密钥${payment.webhookConfigured ? "已配置" : "未配置"}</span></div></form></div><div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">ACCOUNT RECOVERY</span><h3>找回密码邮件</h3></div><span class="admin-status ${email.configured ? "good" : "warn"}"><i></i>${email.configured ? "已配置" : "待配置"}</span></div><p class="admin-form-hint">本地 Express 使用 SMTP，Cloudflare 使用 Resend；凭证均只在服务端保存。</p><form id="email-config-form" class="admin-form grid md:grid-cols-2 gap-4"><label>SMTP 地址（本地 Express）<input id="email-smtp-url" type="url" placeholder="smtp://user:password@smtp.example.com:587" autocomplete="off" /></label><label>Resend API Key（Cloudflare）<input id="email-resend-api-key" type="password" placeholder="留空保持当前密钥" autocomplete="new-password" /></label><label>发件人<input id="email-from" value="${escapeHtml(email.from || "")}" placeholder="CheapVPN <support@example.com>" autocomplete="off" /></label><div class="admin-config-actions"><button class="admin-outline" type="submit">保存邮件设置</button><span class="admin-form-hint" id="email-config-hint">${email.configured ? "密码找回邮件已就绪" : "请配置对应部署方式的邮件凭证"}</span></div></form></div>`;
+}
+
+function renderAdminPayments() {
+  const summary = adminState.paymentSummary || {};
+  const rows = (adminState.payments || []).map((item) => `<tr><td class="admin-token">${escapeHtml(item.orderId.slice(0, 8))}...</td><td><strong>${escapeHtml(item.user?.name || "")}</strong><small class="block">${escapeHtml(item.user?.email || "")}</small></td><td>${escapeHtml(item.planName || "")}</td><td>¥${Number(item.amount).toFixed(2)}</td><td>${escapeHtml(item.provider)}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(item.activationStatus || "-")}${item.activationError ? `<small class="block">${escapeHtml(item.activationError)}</small>` : ""}</td><td>${escapeHtml(item.createdAt || "")}</td><td>${escapeHtml(item.paidAt || "-")}</td><td>${item.status === "pending" ? `<button class="admin-usage-edit" data-payment-query="${escapeHtml(item.id)}">查询渠道</button>` : ""}${item.orderStatus === "paid" && item.activationStatus !== "active" ? `<button class="admin-usage-edit" data-retry-activation="${escapeHtml(item.orderId)}">重新开通</button>` : ""}${item.orderStatus === "pending" ? `<button class="admin-usage-edit" data-close-order="${escapeHtml(item.orderId)}">关闭订单</button>` : ""}</td></tr>`).join("");
+  return `<section class="admin-view"><div class="admin-section-intro"><div><span class="admin-eyebrow">PAYMENTS</span><h2>支付与开通异常</h2><p>查看扫码支付、已付款未开通订单，并查询渠道或重试开通。</p></div></div><div class="admin-metric-grid">${adminMetric("今日订单", summary.todayOrders || 0, "receipt", "blue")}${adminMetric("今日收入", `¥${Number(summary.todayRevenue || 0).toFixed(2)}`, "payments", "green")}${adminMetric("支付成功", summary.paid || 0, "verified", "green")}${adminMetric("待支付", summary.pending || 0, "hourglass", "orange")}${adminMetric("支付失败", summary.failed || 0, "error", "orange")}${adminMetric("已付款未开通", summary.unpaidActivation || 0, "report", "orange")}</div><div class="admin-card admin-table-wrap mt-6"><table class="admin-table"><thead><tr><th>订单号</th><th>用户</th><th>套餐</th><th>金额</th><th>渠道</th><th>支付状态</th><th>订阅状态</th><th>创建时间</th><th>支付时间</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="10" class="admin-empty">暂无支付记录</td></tr>`}</tbody></table></div></section>`;
 }
 
 function renderAdminOrders() {
@@ -709,7 +754,7 @@ async function loadAdminState() {
   try {
     const userQuery = new URLSearchParams({ q: adminState.userQuery, page: String(adminState.userPage), pageSize: "50" });
     const orderQuery = new URLSearchParams({ q: adminState.orderQuery, status: adminState.orderStatus, page: String(adminState.orderPage), pageSize: "50" });
-    const [overview, operations, users, orders, tickets, upstream, pools, plans, system, paymentSettings, usageSettings, emailSettings] = await Promise.all([
+    const [overview, operations, users, orders, tickets, upstream, pools, plans, system, paymentSettings, usageSettings, emailSettings, payments] = await Promise.all([
       adminApiRequest("/admin/overview"),
       // Node exposes the richer metrics endpoint, while the experimental
       // Worker intentionally does not. Keep it optional so one parity gap
@@ -728,6 +773,7 @@ async function loadAdminState() {
       adminApiRequest("/admin/settings/payment"),
       adminApiRequest("/admin/settings/usage"),
       adminApiRequest("/admin/settings/email"),
+      adminApiRequest("/admin/payments").catch(() => ({ payments: [], summary: {} })),
     ]);
     adminState.metrics = overview.metrics;
     adminState.operations = operations || {};
@@ -743,6 +789,8 @@ async function loadAdminState() {
     adminState.paymentSettings = paymentSettings;
     adminState.usageSettings = usageSettings;
     adminState.emailSettings = emailSettings;
+    adminState.payments = payments.payments || [];
+    adminState.paymentSummary = payments.summary || {};
     adminState.sources = overview.sources || upstream.sources || [];
     adminState.error = "";
   } catch (error) {
@@ -1282,6 +1330,42 @@ function bindAdminEvents() {
       event.currentTarget.disabled = false;
     }
   });
+  document.querySelectorAll("[data-payment-query]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await adminApiRequest(`/admin/payments/${event.currentTarget.dataset.paymentQuery}/query`, { method: "POST" });
+        await loadAdminState();
+      } catch (error) {
+        showAdminMessage(error.message);
+        event.currentTarget.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll("[data-retry-activation]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await adminApiRequest(`/admin/orders/${event.currentTarget.dataset.retryActivation}/retry-activation`, { method: "POST" });
+        await loadAdminState();
+      } catch (error) {
+        showAdminMessage(error.message);
+        event.currentTarget.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll("[data-close-order]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await adminApiRequest(`/admin/orders/${event.currentTarget.dataset.closeOrder}/close`, { method: "POST" });
+        await loadAdminState();
+      } catch (error) {
+        showAdminMessage(error.message);
+        event.currentTarget.disabled = false;
+      }
+    });
+  });
 }
 
 function showAdminMessage(message) {
@@ -1581,6 +1665,7 @@ function renderBilling() {
     <div class="panel p-7">
       <div class="flex flex-wrap items-center justify-between gap-4"><div><h2 class="text-2xl font-bold">${t("orderHistory")}</h2><p class="text-slate-600 mt-3">${t("orderHistoryText")}</p></div><button class="btn btn-secondary" id="refresh-orders"><span class="material-symbols-outlined">refresh</span>刷新订单状态</button></div>
       ${state.paymentMode === "manual" && state.paymentConfig?.manualInstructions ? `<div class="notice notice-info mt-6"><span class="material-symbols-outlined">payments</span><div><strong>人工付款说明</strong><p class="mt-1 whitespace-pre-line">${escapeHtml(state.paymentConfig.manualInstructions)}</p><p class="mt-2 text-sm">付款后请保留订单号，后台确认收款后订阅会自动生效。</p></div></div>` : ""}
+      ${pendingOrder && state.paymentMode === "wechat_alipay" ? `<div class="panel-soft p-5 mt-6"><div class="flex flex-wrap items-center justify-between gap-3"><div><h3 class="text-xl font-bold">扫码支付</h3><p class="text-sm text-slate-600 mt-1">订单金额 ¥${Number(pendingOrder.amount).toFixed(2)}。选择微信或支付宝后展示二维码。</p></div><span class="status-pill text-amber-700 bg-amber-50 border border-amber-200">等待付款</span></div><div class="flex flex-wrap gap-3 mt-5"><button class="btn btn-primary" data-open-native-pay="${escapeHtml(pendingOrder.id)}" data-provider="wechat">微信支付</button><button class="btn btn-primary" data-open-native-pay="${escapeHtml(pendingOrder.id)}" data-provider="alipay">支付宝</button></div></div>` : ""}
       ${pendingOrder && state.paymentMode === "manual" ? `<div class="panel-soft p-5 mt-6"><div class="flex flex-wrap items-center justify-between gap-3"><div><h3 class="text-xl font-bold">选择支付方式</h3><p class="text-sm text-slate-600 mt-1">订单金额 ¥${Number(pendingOrder.amount).toFixed(2)}。完成付款后提交对应流水号。</p></div><span class="status-pill text-amber-700 bg-amber-50 border border-amber-200">等待付款</span></div><div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5">${methods.map((method) => `<button class="panel-soft p-4 text-left border-2 ${selectedMethod === method.id ? "border-blue-600 bg-blue-50" : "border-transparent"}" data-select-payment-method="${escapeHtml(method.id)}"><span class="material-symbols-outlined text-blue-700">${escapeHtml(method.icon || "payments")}</span><strong class="block mt-2">${escapeHtml(method.label)}</strong><small class="text-slate-500">${escapeHtml(method.description || "")}</small></button>`).join("")}</div><p class="text-sm text-slate-500 mt-4">已选择：${escapeHtml(methodLabel(selectedMethod))}。卡片与钱包的敏感信息不会在 CheapVPN 页面填写。</p></div>` : ""}
       <div class="overflow-x-auto mt-7">
         <table class="w-full text-left min-w-[680px]"><thead><tr class="text-sm text-slate-500 border-b border-slate-200">
@@ -1667,6 +1752,34 @@ function renderAccount() {
       </div>
     </div>
   `;
+}
+
+function bindPaymentModal() {
+  document.querySelector("[data-close-payment-modal]")?.addEventListener("click", () => {
+    state.paymentSession = null;
+    render();
+  });
+  document.querySelectorAll("[data-pay-provider]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const provider = event.currentTarget.dataset.payProvider;
+      const orderId = state.paymentSession?.order?.id;
+      if (!orderId) return;
+      try {
+        const created = await apiRequest(`/orders/${encodeURIComponent(orderId)}/payments`, { method: "POST", body: { provider } });
+        state.paymentSession = { ...state.paymentSession, payment: created };
+        render();
+      } catch (error) { showToast(error.message); }
+    });
+  });
+  document.querySelectorAll("[data-copy-sub]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const value = event.currentTarget.dataset.copySub;
+      if (value) {
+        await navigator.clipboard.writeText(value);
+        showToast("订阅已复制");
+      }
+    });
+  });
 }
 
 function metric(label, value) {
@@ -1831,6 +1944,18 @@ function bindEvents() {
       }
     });
   });
+  document.querySelectorAll("[data-open-native-pay]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const orderId = event.currentTarget.dataset.openNativePay;
+      const order = state.orders.find((item) => item.id === orderId);
+      if (!order) return;
+      try {
+        const created = await apiRequest(`/orders/${encodeURIComponent(orderId)}/payments`, { method: "POST", body: { provider: event.currentTarget.dataset.provider || "wechat" } });
+        state.paymentSession = { order, payment: created, planName: order.planName };
+        render();
+      } catch (error) { showToast(error.message); }
+    });
+  });
   document.querySelectorAll("[data-select-payment-method]").forEach((button) => {
     button.addEventListener("click", (event) => {
       state.selectedPaymentMethod = event.currentTarget.dataset.selectPaymentMethod || "";
@@ -1957,6 +2082,15 @@ async function buyPlan(planId = state.subscription?.plan?.id || state.plans[0]?.
     } catch (error) {
       if (error.code !== "REQUEST_TIMEOUT") throw error;
       order = await orderRequest();
+    }
+    if (state.paymentMode === "wechat_alipay") {
+      const created = await apiRequest(`/orders/${encodeURIComponent(order.order.id)}/payments`, { method: "POST", body: { provider: "wechat" } });
+      state.orders = (await apiRequest("/orders")).orders || state.orders;
+      state.paymentSession = { order: order.order, payment: created, planName: order.plan?.name || state.plan?.name };
+      state.view = "billing";
+      showToast(t("orderPending"));
+      render();
+      return;
     }
     if (state.paymentMode !== "mock") {
       state.orders = (await apiRequest("/orders")).orders || state.orders;

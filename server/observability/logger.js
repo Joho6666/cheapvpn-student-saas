@@ -1,5 +1,5 @@
 const ALLOWED_FIELDS = new Set([
-  "requestId", "userId", "orderId", "provider", "eventId", "status", "code", "method",
+  "requestId", "userId", "orderId", "paymentId", "provider", "eventId", "status", "code", "method",
   "path", "durationMs", "count", "sourceId", "format", "success", "reason", "message",
 ]);
 

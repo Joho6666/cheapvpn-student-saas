@@ -25,8 +25,40 @@ export const nodeGeoTimeout = Math.max(500, number(process.env.NODE_GEO_TIMEOUT_
 export const adminPassword = process.env.ADMIN_PASSWORD || "change-me-now";
 export const productionRuntime = String(process.env.NODE_ENV || "").toLowerCase() === "production";
 export const paymentWebhookSecretDefault = process.env.PAYMENT_WEBHOOK_SECRET || "";
-export const paymentModeDefault = ["mock", "manual", "webhook"].includes(String(process.env.PAYMENT_MODE || "mock"))
+export const paymentModeDefault = ["mock", "manual", "webhook", "wechat_alipay"].includes(String(process.env.PAYMENT_MODE || "mock"))
   ? String(process.env.PAYMENT_MODE || "mock") : "mock";
+export const paymentProviderModeDefault = ["mock", "live"].includes(String(process.env.PAYMENT_PROVIDER_MODE || "live"))
+  ? String(process.env.PAYMENT_PROVIDER_MODE || "live") : "live";
+export const paymentProvidersDefault = String(process.env.PAYMENT_PROVIDERS || "wechat,alipay")
+  .split(",").map((value) => value.trim().toLowerCase()).filter((value) => ["wechat", "alipay"].includes(value));
+
+function envText(name) {
+  return String(process.env[name] || "").replace(/\\n/g, "\n").trim();
+}
+
+export const wechatPayEnabled = bool(process.env.WECHAT_PAY_ENABLED);
+export const wechatPayConfig = Object.freeze({
+  enabled: wechatPayEnabled,
+  appId: envText("WECHAT_PAY_APP_ID"),
+  mchId: envText("WECHAT_PAY_MCH_ID"),
+  certSerialNo: envText("WECHAT_PAY_CERT_SERIAL_NO"),
+  privateKey: envText("WECHAT_PAY_PRIVATE_KEY"),
+  apiV3Key: envText("WECHAT_PAY_API_V3_KEY"),
+  publicKey: envText("WECHAT_PAY_PUBLIC_KEY"),
+  publicKeyId: envText("WECHAT_PAY_PUBLIC_KEY_ID"),
+  notifyUrl: envText("WECHAT_PAY_NOTIFY_URL"),
+});
+
+export const alipayEnabled = bool(process.env.ALIPAY_ENABLED);
+export const alipayConfig = Object.freeze({
+  enabled: alipayEnabled,
+  appId: envText("ALIPAY_APP_ID"),
+  privateKey: envText("ALIPAY_PRIVATE_KEY"),
+  publicKey: envText("ALIPAY_PUBLIC_KEY"),
+  gateway: envText("ALIPAY_GATEWAY") || "https://openapi.alipay.com/gateway.do",
+  notifyUrl: envText("ALIPAY_NOTIFY_URL"),
+  sellerId: envText("ALIPAY_SELLER_ID"),
+});
 export const paymentMethodCatalog = [
   { id: "wechat_pay", label: "WeChat Pay", icon: "chat", description: "微信支付" },
   { id: "alipay", label: "Alipay", icon: "account_balance_wallet", description: "支付宝" },
@@ -50,7 +82,9 @@ export const config = Object.freeze({
   dataDir, port, host, publicBaseUrl, trustProxyHeaders, configuredCorsOrigins,
   upstreamTimeout, nodeTestConcurrency, upstreamSyncConcurrency, nodeProbeTimeout,
   nodeGeoTimeout, adminPassword, productionRuntime, paymentWebhookSecretDefault,
-  paymentModeDefault, paymentMethodCatalog, allowDemoSubscription, allowDemoAccount,
+  paymentModeDefault, paymentProviderModeDefault, paymentProvidersDefault,
+  wechatPayEnabled, wechatPayConfig, alipayEnabled, alipayConfig,
+  paymentMethodCatalog, allowDemoSubscription, allowDemoAccount,
   paymentCheckoutTemplateDefault, paymentManualInstructionsDefault,
   upstreamUsageApiUrlDefault, upstreamUsageApiTokenDefault, upstreamUsageSyncIntervalDefault,
   upstreamAssignmentDefault, smtpUrlDefault, emailFromDefault, allowPrivateUpstreamUrls,
