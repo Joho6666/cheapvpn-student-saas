@@ -629,3 +629,27 @@ html[dir="rtl"] .main { text-align: right; }
 html[dir="rtl"] .mobile-nav,
 html[dir="rtl"] .auth-shell { direction: rtl; }
 html[dir="rtl"] .auth-language { right: auto; left: 24px; }
+
+.payment-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(23, 32, 47, 0.45);
+}
+.payment-modal {
+  width: min(480px, 100%);
+  padding: 28px;
+}
+.payment-modal-head, .payment-provider-row, .payment-success-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.payment-provider-row, .payment-success-actions { margin-top: 18px; }
+.payment-qr-wrap { text-align: center; margin-top: 22px; }
+.payment-status-line { margin-top: 16px; font-weight: 700; text-align: center; }

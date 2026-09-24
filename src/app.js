@@ -1,4 +1,6 @@
 import QRCode from "qrcode";
+import { createApiClient } from "./api/client.js";
+import { drawPaymentQr, paymentModalHtml, paymentPollDelay } from "./payment-modal.js";
 
 const state = {
   view: "overview",
@@ -19,6 +21,7 @@ const state = {
   paymentMode: "mock",
   paymentConfig: null,
   selectedPaymentMethod: "",
+  paymentSession: null,
   demoEnabled: false,
   authToken: localStorage.getItem("cheapvpn_session"),
   loading: true,
@@ -31,6 +34,7 @@ const adminState = {
   loading: true,
   error: "",
   metrics: null,
+  operations: null,
   users: [],
   userQuery: "",
   userPage: 1,
@@ -38,15 +42,27 @@ const adminState = {
   orders: [],
   tickets: [],
   sources: [],
+  pools: [],
   upstream: null,
   system: null,
   paymentSettings: null,
   emailSettings: null,
   usageSettings: null,
+  payments: [],
+  paymentSummary: null,
 };
 
 const API_BASE = `${window.location.origin}/api`;
+const apiClient = createApiClient({
+  baseUrl: API_BASE,
+  getUserToken: () => state.authToken,
+  getAdminToken: () => adminState.token,
+  getUnavailableMessage: () => t("apiUnavailable"),
+});
+const apiRequest = (path, options = {}) => apiClient.request(path, options);
+const adminApiRequest = (path, options = {}) => apiClient.adminRequest(path, options);
 let orderPollTimer = null;
+let paymentPollTimer = null;
 let remoteRefreshTimer = null;
 let remoteRefreshInFlight = false;
 let buyInFlight = false;
@@ -387,10 +403,43 @@ function render() {
     </div>
   `;
   bindEvents();
+  if (state.paymentSession) {
+    document.body.insertAdjacentHTML("beforeend", paymentModalHtml({
+      order: state.paymentSession.order,
+      payment: state.paymentSession.payment,
+      planName: state.paymentSession.planName || state.plan?.name,
+      links: subLinks(),
+    }));
+    bindPaymentModal();
+    drawPaymentQr(QRCode, document.querySelector("#payment-qr-canvas"), state.paymentSession.payment?.qrContent).catch(() => undefined);
+  }
   if (state.view === "subscription" && hasActiveSubscription()) renderSubscriptionQr();
 }
 
+function schedulePaymentPolling() {
+  if (paymentPollTimer) {
+    clearTimeout(paymentPollTimer);
+    paymentPollTimer = null;
+  }
+  const session = state.paymentSession;
+  if (!state.authToken || !session?.payment?.paymentId || ["active", "failed", "expired"].includes(session.payment.status)) return;
+  paymentPollTimer = setTimeout(async () => {
+    paymentPollTimer = null;
+    try {
+      const result = await apiRequest(`/payments/${encodeURIComponent(session.payment.paymentId)}/status`);
+      state.paymentSession = { ...session, payment: result };
+      if (result.status === "active") {
+        await loadRemoteState();
+        showToast("支付成功，套餐已开通");
+      } else {
+        render();
+      }
+    } catch { /* Keep the QR visible; the next poll can retry. */ }
+  }, paymentPollDelay(document.hidden));
+}
+
 function scheduleOrderPolling() {
+  schedulePaymentPolling();
   if (orderPollTimer) {
     clearTimeout(orderPollTimer);
     orderPollTimer = null;
@@ -439,7 +488,7 @@ function renderAdminApp() {
     bindAdminLogin();
     return;
   }
-  const views = { overview: renderAdminOverview, users: renderAdminUsers, orders: renderAdminOrders, tickets: renderAdminTickets, plans: renderAdminPlans, upstream: renderAdminUpstream };
+  const views = { overview: renderAdminOverview, users: renderAdminUsers, orders: renderAdminOrders, payments: renderAdminPayments, tickets: renderAdminTickets, plans: renderAdminPlans, upstream: renderAdminUpstream };
   document.querySelector("#app").innerHTML = `
     <div class="admin-shell">
       <aside class="admin-sidebar">
@@ -449,6 +498,7 @@ function renderAdminApp() {
           ${adminNav("overview", "space_dashboard", "概览")}
           ${adminNav("users", "groups", "用户与用量")}
           ${adminNav("orders", "receipt_long", "订单")}
+          ${adminNav("payments", "payments", "支付")}
           ${adminNav("tickets", "support_agent", "工单")}
           ${adminNav("plans", "sell", "套餐")}
           ${adminNav("upstream", "key_vertical", "资源配置")}
@@ -456,13 +506,17 @@ function renderAdminApp() {
         <div class="admin-sidebar-foot"><span class="admin-pulse"></span>API online<div class="admin-sidebar-note">管理员模式<br />上游凭证仅在服务端保存</div></div>
       </aside>
       <main class="admin-main">
-        <header class="admin-topbar"><div><span class="admin-eyebrow">CHEAPVPN / ADMIN</span><h1>${adminState.view === "overview" ? "运营概览" : adminState.view === "users" ? "用户与用量" : adminState.view === "orders" ? "订单管理" : adminState.view === "tickets" ? "客户工单" : adminState.view === "plans" ? "套餐管理" : "资源配置"}</h1></div><div class="admin-top-actions"><span class="admin-date">${new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" })}</span><button class="admin-ghost" id="admin-change-password">修改密码</button><button class="admin-ghost" id="admin-logout">退出后台</button></div></header>
+        <header class="admin-topbar"><div><span class="admin-eyebrow">CHEAPVPN / ADMIN</span><h1>${adminState.view === "overview" ? "运营概览" : adminState.view === "users" ? "用户与用量" : adminState.view === "orders" ? "订单管理" : adminState.view === "payments" ? "支付管理" : adminState.view === "tickets" ? "客户工单" : adminState.view === "plans" ? "套餐管理" : "资源配置"}</h1></div><div class="admin-top-actions"><span class="admin-date">${new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" })}</span><button class="admin-ghost" id="admin-change-password">修改密码</button><button class="admin-ghost" id="admin-logout">退出后台</button></div></header>
         ${views[adminState.view]()}
       </main>
     </div>
   `;
+  if (adminState.view === "upstream") {
+    document.querySelector(".admin-section-intro")?.insertAdjacentHTML("afterend", renderAdminPools());
+  }
   injectAdminTokenResetButtons();
   bindAdminEvents();
+  injectAdminOperations();
 }
 
 function renderAdminLogin() {
@@ -485,6 +539,21 @@ function injectAdminTokenResetButtons() {
     resetButton.textContent = "重置 Token";
     expireButton.parentElement?.insertBefore(resetButton, expireButton);
   });
+}
+
+function renderAdminOperations() {
+  const operations = adminState.operations || {};
+  const today = operations.today || {};
+  const month = operations.month || {};
+  const rate = operations.paymentSuccessRate30d === null || operations.paymentSuccessRate30d === undefined
+    ? "暂无数据" : `${(Number(operations.paymentSuccessRate30d) * 100).toFixed(1)}%`;
+  return `<div class="admin-card admin-readiness-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">REAL OPERATIONS</span><h3>真实运营指标</h3></div><span class="admin-form-hint">UTC ${escapeHtml(operations.utcDate || "-")}</span></div><div class="admin-metric-grid admin-ops-metrics">${adminMetric("今日新增用户", today.newUsers || 0, "person_add", "blue")}${adminMetric("今日支付订单", today.orders || 0, "receipt", "green")}${adminMetric("今日收入", `¥${Number(today.revenue || 0).toFixed(2)}`, "payments", "orange")}${adminMetric("本月收入", `¥${Number(month.revenue || 0).toFixed(2)}`, "calendar_month", "ink")}${adminMetric("7天内到期", operations.expiringSubscriptions7d || 0, "event_busy", "orange")}${adminMetric("支付成功率", rate, "verified", "green")}${adminMetric("上游同步失败", operations.upstreamSyncFailures || 0, "cloud_off", "orange")}${adminMetric("未处理工单", operations.openTickets || 0, "support_agent", "blue")}</div></div>`;
+}
+
+function injectAdminOperations() {
+  if (adminState.view !== "overview") return;
+  const target = document.querySelector(".admin-readiness-card");
+  if (target) target.insertAdjacentHTML("beforebegin", renderAdminOperations());
 }
 
 function renderAdminOverview() {
@@ -514,7 +583,13 @@ function renderAdminPaymentConfig() {
   const payment = adminState.system?.payment || {};
   const settings = adminState.paymentSettings || {};
   const email = adminState.emailSettings || {};
-  return `<div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">PAYMENT SETTINGS</span><h3>下单与收款配置</h3></div><span class="admin-status ${payment.productionReady ? "good" : "warn"}"><i></i>${payment.productionReady ? "生产就绪" : "待配置"}</span></div><p class="admin-form-hint">人工收款可立即使用。自动开通需由支付平台向 <code>${escapeHtml((adminState.system?.publicBaseUrl || window.location.origin).replace(/\/$/, ""))}/api/webhooks/payment</code> 发送通用 HMAC-SHA256 回调；不同平台如采用专用签名格式，需要另做适配。</p><form id="payment-config-form" class="admin-form grid md:grid-cols-2 gap-4"><label>支付模式<select id="payment-mode"><option value="mock" ${payment.mode === "mock" ? "selected" : ""}>模拟支付（仅开发）</option><option value="manual" ${payment.mode === "manual" ? "selected" : ""}>人工收款</option><option value="webhook" ${payment.mode === "webhook" ? "selected" : ""}>通用签名 Webhook</option></select></label><label>收银页地址模板<input id="payment-checkout-template" type="text" inputmode="url" value="${escapeHtml(settings.checkoutTemplate || "")}" placeholder="https://pay.example/checkout?order_id={orderId}&amount={amount}" autocomplete="off" /></label><label class="md:col-span-2">人工收款说明<textarea id="payment-manual-instructions" rows="3" placeholder="例如：请转账后把订单号发给客服。">${escapeHtml(settings.manualInstructions || "")}</textarea></label><label>Webhook 密钥<input id="payment-webhook-secret" type="password" placeholder="留空保持当前密钥" autocomplete="new-password" /></label><label class="flex items-center gap-2"><input id="payment-clear-secret" type="checkbox" />清除当前 Webhook 密钥</label><div class="admin-config-actions md:col-span-2"><button class="admin-outline" type="submit">保存支付配置</button><span class="admin-form-hint" id="payment-config-hint">当前模式：${escapeHtml(payment.mode || "mock")} · 收银页${payment.checkoutConfigured ? "已配置" : "未配置"} · Webhook 密钥${payment.webhookConfigured ? "已配置" : "未配置"}</span></div></form></div><div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">ACCOUNT RECOVERY</span><h3>找回密码邮件</h3></div><span class="admin-status ${email.configured ? "good" : "warn"}"><i></i>${email.configured ? "已配置" : "待配置"}</span></div><p class="admin-form-hint">使用 Resend 发送 30 分钟有效、只能使用一次的重置链接。密钥加密保存在服务端，不会返回浏览器。</p><form id="email-config-form" class="admin-form"><label>Resend API Key<input id="email-resend-api-key" type="password" placeholder="留空保持当前密钥" autocomplete="new-password" /></label><label>发件人<input id="email-from" value="${escapeHtml(email.from || "")}" placeholder="CheapVPN <support@example.com>" autocomplete="off" /></label><div class="admin-config-actions"><button class="admin-outline" type="submit">保存邮件设置</button><span class="admin-form-hint" id="email-config-hint">${email.configured ? "密码找回邮件已就绪" : "请添加 Resend API Key 与已验证发件人"}</span></div></form></div>`;
+  return `<div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">PAYMENT SETTINGS</span><h3>下单与收款配置</h3></div><span class="admin-status ${payment.productionReady ? "good" : "warn"}"><i></i>${payment.productionReady ? "生产就绪" : "待配置"}</span></div><p class="admin-form-hint">人工收款可立即使用。自动开通需由支付平台向 <code>${escapeHtml((adminState.system?.publicBaseUrl || window.location.origin).replace(/\/$/, ""))}/api/webhooks/payment</code> 发送通用 HMAC-SHA256 回调；不同平台如采用专用签名格式，需要另做适配。</p><form id="payment-config-form" class="admin-form grid md:grid-cols-2 gap-4"><label>支付模式<select id="payment-mode"><option value="mock" ${payment.mode === "mock" ? "selected" : ""}>模拟支付（仅开发）</option><option value="manual" ${payment.mode === "manual" ? "selected" : ""}>人工收款</option><option value="webhook" ${payment.mode === "webhook" ? "selected" : ""}>通用签名 Webhook</option><option value="wechat_alipay" ${payment.mode === "wechat_alipay" ? "selected" : ""}>微信/支付宝扫码</option></select></label><label>收银页地址模板<input id="payment-checkout-template" type="text" inputmode="url" value="${escapeHtml(settings.checkoutTemplate || "")}" placeholder="https://pay.example/checkout?order_id={orderId}&amount={amount}" autocomplete="off" /></label><label class="md:col-span-2">人工收款说明<textarea id="payment-manual-instructions" rows="3" placeholder="例如：请转账后把订单号发给客服。">${escapeHtml(settings.manualInstructions || "")}</textarea></label><label>Webhook 密钥<input id="payment-webhook-secret" type="password" placeholder="留空保持当前密钥" autocomplete="new-password" /></label><label class="flex items-center gap-2"><input id="payment-clear-secret" type="checkbox" />清除当前 Webhook 密钥</label><div class="admin-config-actions md:col-span-2"><button class="admin-outline" type="submit">保存支付配置</button><span class="admin-form-hint" id="payment-config-hint">当前模式：${escapeHtml(payment.mode || "mock")} · 收银页${payment.checkoutConfigured ? "已配置" : "未配置"} · Webhook 密钥${payment.webhookConfigured ? "已配置" : "未配置"}</span></div></form></div><div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">ACCOUNT RECOVERY</span><h3>找回密码邮件</h3></div><span class="admin-status ${email.configured ? "good" : "warn"}"><i></i>${email.configured ? "已配置" : "待配置"}</span></div><p class="admin-form-hint">本地 Express 使用 SMTP，Cloudflare 使用 Resend；凭证均只在服务端保存。</p><form id="email-config-form" class="admin-form grid md:grid-cols-2 gap-4"><label>SMTP 地址（本地 Express）<input id="email-smtp-url" type="url" placeholder="smtp://user:password@smtp.example.com:587" autocomplete="off" /></label><label>Resend API Key（Cloudflare）<input id="email-resend-api-key" type="password" placeholder="留空保持当前密钥" autocomplete="new-password" /></label><label>发件人<input id="email-from" value="${escapeHtml(email.from || "")}" placeholder="CheapVPN <support@example.com>" autocomplete="off" /></label><div class="admin-config-actions"><button class="admin-outline" type="submit">保存邮件设置</button><span class="admin-form-hint" id="email-config-hint">${email.configured ? "密码找回邮件已就绪" : "请配置对应部署方式的邮件凭证"}</span></div></form></div>`;
+}
+
+function renderAdminPayments() {
+  const summary = adminState.paymentSummary || {};
+  const rows = (adminState.payments || []).map((item) => `<tr><td class="admin-token">${escapeHtml(item.orderId.slice(0, 8))}...</td><td><strong>${escapeHtml(item.user?.name || "")}</strong><small class="block">${escapeHtml(item.user?.email || "")}</small></td><td>${escapeHtml(item.planName || "")}</td><td>¥${Number(item.amount).toFixed(2)}</td><td>${escapeHtml(item.provider)}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(item.activationStatus || "-")}${item.activationError ? `<small class="block">${escapeHtml(item.activationError)}</small>` : ""}</td><td>${escapeHtml(item.createdAt || "")}</td><td>${escapeHtml(item.paidAt || "-")}</td><td>${item.status === "pending" ? `<button class="admin-usage-edit" data-payment-query="${escapeHtml(item.id)}">查询渠道</button>` : ""}${item.orderStatus === "paid" && item.activationStatus !== "active" ? `<button class="admin-usage-edit" data-retry-activation="${escapeHtml(item.orderId)}">重新开通</button>` : ""}${item.orderStatus === "pending" ? `<button class="admin-usage-edit" data-close-order="${escapeHtml(item.orderId)}">关闭订单</button>` : ""}</td></tr>`).join("");
+  return `<section class="admin-view"><div class="admin-section-intro"><div><span class="admin-eyebrow">PAYMENTS</span><h2>支付与开通异常</h2><p>查看扫码支付、已付款未开通订单，并查询渠道或重试开通。</p></div></div><div class="admin-metric-grid">${adminMetric("今日订单", summary.todayOrders || 0, "receipt", "blue")}${adminMetric("今日收入", `¥${Number(summary.todayRevenue || 0).toFixed(2)}`, "payments", "green")}${adminMetric("支付成功", summary.paid || 0, "verified", "green")}${adminMetric("待支付", summary.pending || 0, "hourglass", "orange")}${adminMetric("支付失败", summary.failed || 0, "error", "orange")}${adminMetric("已付款未开通", summary.unpaidActivation || 0, "report", "orange")}</div><div class="admin-card admin-table-wrap mt-6"><table class="admin-table"><thead><tr><th>订单号</th><th>用户</th><th>套餐</th><th>金额</th><th>渠道</th><th>支付状态</th><th>订阅状态</th><th>创建时间</th><th>支付时间</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="10" class="admin-empty">暂无支付记录</td></tr>`}</tbody></table></div></section>`;
 }
 
 function renderAdminOrders() {
@@ -531,6 +606,17 @@ function renderAdminTickets() {
 function renderAdminPlans() {
   const cards = adminState.plans.map((plan) => `<article class="admin-card p-5"><div class="flex items-center justify-between gap-3"><div><span class="admin-eyebrow">${escapeHtml(plan.slug)}</span><h3>${escapeHtml(plan.name)}</h3></div><span class="admin-status ${plan.active ? "good" : "warn"}"><i></i>${plan.active ? "启用" : "停用"}</span></div><div class="grid grid-cols-2 gap-3 mt-5"><div class="panel-soft p-3"><small>首个周期</small><strong>¥${Number(plan.firstMonth).toFixed(2)}</strong></div><div class="panel-soft p-3"><small>续费周期</small><strong>¥${Number(plan.renewal).toFixed(2)}</strong></div><div class="panel-soft p-3"><small>周期长度</small><strong>${plan.periodMonths || 1} 个月</strong></div><div class="panel-soft p-3"><small>周期流量</small><strong>${Number(plan.dataTotal).toFixed(0)} GB</strong></div><div class="panel-soft p-3"><small>设备</small><strong>${plan.devices} 台</strong></div></div><div class="flex gap-3 mt-5"><button class="admin-outline" data-plan-edit="${plan.id}">编辑套餐</button><button class="admin-outline" data-plan-toggle="${plan.id}" data-plan-active="${plan.active}">${plan.active ? "停用" : "启用"}</button>${adminState.plans.length > 1 ? `<button class="admin-ghost" data-plan-delete="${plan.id}" ${plan.active && adminState.plans.filter((item) => item.active).length <= 1 ? "disabled" : ""}>停用套餐</button>` : ""}</div></article>`).join("");
   return `<section class="admin-view"><div class="admin-section-intro"><div><span class="admin-eyebrow">PRODUCT CATALOG</span><h2>套餐管理</h2><p>统一维护价格、周期、流量配额和设备上限。</p></div></div><div class="grid xl:grid-cols-3 gap-5">${cards}</div><div class="admin-card admin-config-card mt-6"><div class="admin-card-heading"><div><span class="admin-eyebrow">ADD PLAN</span><h3>新增套餐</h3></div></div><form id="plan-form" class="admin-form grid md:grid-cols-2 gap-4"><label>套餐标识<input id="plan-slug" placeholder="student-plus" pattern="[a-z0-9-]+" required /></label><label>套餐名称<input id="plan-name" placeholder="留学生进阶版" required /></label><label>首个周期价格<input id="plan-first" type="number" min="0" step="0.01" placeholder="9.9" required /></label><label>续费周期价格<input id="plan-renewal" type="number" min="0" step="0.01" placeholder="19.9" required /></label><label>周期长度（月）<input id="plan-period" type="number" min="1" max="24" step="1" value="1" required /></label><label>周期流量 GB<input id="plan-data" type="number" min="0" step="0.1" placeholder="50" required /></label><label>设备数<input id="plan-devices" type="number" min="1" max="100" step="1" placeholder="2" required /></label><div><button class="admin-primary" type="submit">保存套餐<span class="material-symbols-outlined">add</span></button></div><p class="admin-form-hint" id="plan-form-hint">周期为 1 表示月付，12 表示年付；已有订阅不会被删除。</p></form></div></section>`;
+}
+
+function renderAdminPools() {
+  const sourceOptions = adminState.sources.map((source) => `<option value="${source.id}">${escapeHtml(source.name)}${source.enabled ? "" : "（已停用）"}</option>`).join("");
+  const cards = adminState.pools.map((pool) => {
+    const memberIds = new Set((pool.members || []).map((member) => Number(member.id)));
+    const options = adminState.sources.map((source) => `<option value="${source.id}" ${memberIds.has(Number(source.id)) ? "selected" : ""}>${escapeHtml(source.name)}</option>`).join("");
+    const health = (pool.members || []).filter((member) => member.enabled).length;
+    return `<article class="admin-card admin-config-card"><div class="admin-card-heading"><div><span class="admin-eyebrow">RESOURCE POOL</span><h3>${escapeHtml(pool.name)}</h3></div><span class="admin-status ${pool.enabled ? "good" : "warn"}"><i></i>${pool.enabled ? "启用" : "停用"}</span></div><p class="admin-form-hint">${pool.isDefault ? "默认资源池：新用户订阅会合并所有启用成员。" : "非默认资源池：可手动分配给指定用户。"} 当前 ${health}/${pool.memberCount} 个成员可参与合并。</p><form class="admin-form pool-edit-form" data-pool-id="${pool.id}"><label>资源池名称<input name="name" value="${escapeHtml(pool.name)}" required /></label><label>成员货源（按 Ctrl/⌘ 多选）<select name="sourceIds" multiple size="${Math.min(6, Math.max(3, adminState.sources.length))}" required>${options}</select></label><div class="admin-config-actions"><label class="flex items-center gap-2"><input name="enabled" type="checkbox" ${pool.enabled ? "checked" : ""} />启用资源池</label><label class="flex items-center gap-2"><input name="isDefault" type="checkbox" ${pool.isDefault ? "checked" : ""} />设为默认池</label><button class="admin-outline" type="submit">保存资源池</button><button class="admin-outline" type="button" data-pool-preview="${pool.id}">安全预览</button><button class="admin-outline" type="button" data-pool-sync="${pool.id}">立即同步</button></div></form></article>`;
+  }).join("");
+  return `<div class="admin-config-grid source-config-bottom"><div class="admin-card admin-config-card"><div class="admin-card-heading"><div><span class="admin-eyebrow">POOL DISTRIBUTION</span><h3>统一订阅资源池</h3></div><span class="admin-status good"><i></i>Node/Docker</span></div><p class="admin-form-hint">资源池会把所有健康货源合并为一条 CheapVPN 订阅。预览只返回数量和协议统计，绝不返回节点凭据。</p><form id="pool-form" class="admin-form"><label>资源池名称<input id="pool-name" placeholder="例如：全量节点池" required /></label><label>成员货源（按 Ctrl/⌘ 多选）<select id="pool-sources" multiple size="4" required>${sourceOptions}</select></label><label class="flex items-center gap-2"><input id="pool-default" type="checkbox" />设为默认资源池</label><button class="admin-primary" type="submit">创建资源池<span class="material-symbols-outlined">hub</span></button></form></div>${cards || `<div class="admin-card source-empty">当前后端尚未加载资源池。Node/Docker 部署时可在此创建。</div>`}</div>`;
 }
 
 function renderAdminUpstream() {
@@ -640,71 +726,6 @@ async function submitAuth(mode, email, password, name, referralCode = "") {
   }
 }
 
-async function apiRequest(path, options = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs || 12000);
-  try {
-    const response = await fetch(`${API_BASE}${path}`, {
-      method: options.method || "GET",
-      headers: { "Content-Type": "application/json", ...(state.authToken ? { Authorization: `Bearer ${state.authToken}` } : {}), ...(options.headers || {}) },
-      body: options.body ? JSON.stringify(options.body) : undefined,
-      signal: controller.signal,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(data.error?.message || t("apiUnavailable"));
-      error.status = response.status;
-      error.code = data.error?.code || "";
-      throw error;
-    }
-    return data;
-  } catch (error) {
-    if (error.name === "AbortError") {
-      const timeout = new Error(t("apiUnavailable"));
-      timeout.code = "REQUEST_TIMEOUT";
-      throw timeout;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function adminApiRequest(path, options = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs || 12000);
-  try {
-    const response = await fetch(`${API_BASE}${path}`, {
-      method: options.method || "GET",
-      headers: { "Content-Type": "application/json", ...(adminState.token ? { Authorization: `Bearer ${adminState.token}` } : {}) },
-      body: options.body ? JSON.stringify(options.body) : undefined,
-      signal: controller.signal,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (response.status === 404) {
-        const error = new Error("后台服务版本较旧，请重启 npm run server");
-        error.status = response.status;
-        throw error;
-      }
-      const error = new Error(data.error?.message || "后台请求失败");
-      error.status = response.status;
-      error.code = data.error?.code || "";
-      throw error;
-    }
-    return data;
-  } catch (error) {
-    if (error.name === "AbortError") {
-      const timeout = new Error("后台请求超时，请检查 API 服务");
-      timeout.code = "REQUEST_TIMEOUT";
-      throw timeout;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function bindAdminLogin() {
   document.querySelector("#admin-login-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -733,19 +754,29 @@ async function loadAdminState() {
   try {
     const userQuery = new URLSearchParams({ q: adminState.userQuery, page: String(adminState.userPage), pageSize: "50" });
     const orderQuery = new URLSearchParams({ q: adminState.orderQuery, status: adminState.orderStatus, page: String(adminState.orderPage), pageSize: "50" });
-    const [overview, users, orders, tickets, upstream, plans, system, paymentSettings, usageSettings, emailSettings] = await Promise.all([
+    const [overview, operations, users, orders, tickets, upstream, pools, plans, system, paymentSettings, usageSettings, emailSettings, payments] = await Promise.all([
       adminApiRequest("/admin/overview"),
+      // Node exposes the richer metrics endpoint, while the experimental
+      // Worker intentionally does not. Keep it optional so one parity gap
+      // cannot hide the users, orders, and payment settings that are shared
+      // by both backends.
+      adminApiRequest("/admin/metrics").catch(() => null),
       adminApiRequest(`/admin/users?${userQuery}`),
       adminApiRequest(`/admin/orders?${orderQuery}`),
       adminApiRequest("/admin/tickets"),
       adminApiRequest("/admin/upstream"),
+      // Resource pools are a Node/Docker production feature. The Cloudflare
+      // MVP intentionally does not implement it, so keep its Admin UI usable.
+      adminApiRequest("/admin/pools").catch(() => ({ pools: [] })),
       adminApiRequest("/admin/plans"),
       adminApiRequest("/admin/system"),
       adminApiRequest("/admin/settings/payment"),
       adminApiRequest("/admin/settings/usage"),
       adminApiRequest("/admin/settings/email"),
+      adminApiRequest("/admin/payments").catch(() => ({ payments: [], summary: {} })),
     ]);
     adminState.metrics = overview.metrics;
+    adminState.operations = operations || {};
     adminState.users = users.users;
     adminState.userPagination = users.pagination;
     adminState.orders = orders.orders;
@@ -753,10 +784,13 @@ async function loadAdminState() {
     adminState.tickets = tickets.tickets;
     adminState.plans = plans.plans;
     adminState.upstream = upstream;
+    adminState.pools = pools.pools || [];
     adminState.system = system;
     adminState.paymentSettings = paymentSettings;
     adminState.usageSettings = usageSettings;
     adminState.emailSettings = emailSettings;
+    adminState.payments = payments.payments || [];
+    adminState.paymentSummary = payments.summary || {};
     adminState.sources = overview.sources || upstream.sources || [];
     adminState.error = "";
   } catch (error) {
@@ -991,6 +1025,8 @@ function bindAdminEvents() {
     button.disabled = true;
     try {
       const body = { from: document.querySelector("#email-from")?.value?.trim() || "" };
+      const smtpUrl = document.querySelector("#email-smtp-url")?.value?.trim() || "";
+      if (smtpUrl) body.smtpUrl = smtpUrl;
       const resendApiKey = document.querySelector("#email-resend-api-key")?.value?.trim() || "";
       if (resendApiKey) body.resendApiKey = resendApiKey;
       await adminApiRequest("/admin/settings/email", { method: "PUT", body });
@@ -1034,6 +1070,55 @@ function bindAdminEvents() {
       if (hint) hint.textContent = error.message;
       event.currentTarget.disabled = false;
     }
+  });
+  document.querySelector("#pool-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector("button");
+    const sourceIds = [...document.querySelector("#pool-sources").selectedOptions].map((option) => Number(option.value));
+    button.disabled = true;
+    try {
+      await adminApiRequest("/admin/pools", { method: "POST", body: { name: document.querySelector("#pool-name").value, sourceIds, isDefault: document.querySelector("#pool-default").checked } });
+      showAdminMessage("资源池已创建；新用户订阅会使用该池的健康成员。");
+      await loadAdminState();
+    } catch (error) { showAdminMessage(error.message); button.disabled = false; }
+  });
+  document.querySelectorAll(".pool-edit-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const poolId = event.currentTarget.dataset.poolId;
+      const button = event.currentTarget.querySelector("button[type=submit]");
+      const sourceIds = [...event.currentTarget.querySelector("[name=sourceIds]").selectedOptions].map((option) => Number(option.value));
+      button.disabled = true;
+      try {
+        await adminApiRequest(`/admin/pools/${poolId}`, { method: "PUT", body: {
+          name: event.currentTarget.querySelector("[name=name]").value, sourceIds,
+          enabled: event.currentTarget.querySelector("[name=enabled]").checked,
+          isDefault: event.currentTarget.querySelector("[name=isDefault]").checked,
+        } });
+        await loadAdminState();
+      } catch (error) { showAdminMessage(error.message); button.disabled = false; }
+    });
+  });
+  document.querySelectorAll("[data-pool-preview]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        const result = await adminApiRequest(`/admin/pools/${event.currentTarget.dataset.poolPreview}/preview`, { method: "POST" });
+        const protocols = Object.entries(result.summary.protocols || {}).map(([name, count]) => `${name} ${count}`).join("、") || "无可用协议";
+        showAdminMessage(`预览：${result.summary.healthySources} 个健康源，${result.summary.uniqueNodes}/${result.summary.totalNodes} 个去重后节点；${protocols}。`);
+      } catch (error) { showAdminMessage(error.message); }
+      finally { event.currentTarget.disabled = false; }
+    });
+  });
+  document.querySelectorAll("[data-pool-sync]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        const result = await adminApiRequest(`/admin/pools/${event.currentTarget.dataset.poolSync}/sync`, { method: "POST" });
+        showAdminMessage(`资源池同步完成：${result.success} 成功，${result.partial} 部分成功，${result.stale} 保留缓存。`);
+        await loadAdminState();
+      } catch (error) { showAdminMessage(error.message); event.currentTarget.disabled = false; }
+    });
   });
   document.querySelector("#upstream-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1244,6 +1329,42 @@ function bindAdminEvents() {
       showAdminMessage(error.message);
       event.currentTarget.disabled = false;
     }
+  });
+  document.querySelectorAll("[data-payment-query]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await adminApiRequest(`/admin/payments/${event.currentTarget.dataset.paymentQuery}/query`, { method: "POST" });
+        await loadAdminState();
+      } catch (error) {
+        showAdminMessage(error.message);
+        event.currentTarget.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll("[data-retry-activation]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await adminApiRequest(`/admin/orders/${event.currentTarget.dataset.retryActivation}/retry-activation`, { method: "POST" });
+        await loadAdminState();
+      } catch (error) {
+        showAdminMessage(error.message);
+        event.currentTarget.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll("[data-close-order]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await adminApiRequest(`/admin/orders/${event.currentTarget.dataset.closeOrder}/close`, { method: "POST" });
+        await loadAdminState();
+      } catch (error) {
+        showAdminMessage(error.message);
+        event.currentTarget.disabled = false;
+      }
+    });
   });
 }
 
@@ -1544,6 +1665,7 @@ function renderBilling() {
     <div class="panel p-7">
       <div class="flex flex-wrap items-center justify-between gap-4"><div><h2 class="text-2xl font-bold">${t("orderHistory")}</h2><p class="text-slate-600 mt-3">${t("orderHistoryText")}</p></div><button class="btn btn-secondary" id="refresh-orders"><span class="material-symbols-outlined">refresh</span>刷新订单状态</button></div>
       ${state.paymentMode === "manual" && state.paymentConfig?.manualInstructions ? `<div class="notice notice-info mt-6"><span class="material-symbols-outlined">payments</span><div><strong>人工付款说明</strong><p class="mt-1 whitespace-pre-line">${escapeHtml(state.paymentConfig.manualInstructions)}</p><p class="mt-2 text-sm">付款后请保留订单号，后台确认收款后订阅会自动生效。</p></div></div>` : ""}
+      ${pendingOrder && state.paymentMode === "wechat_alipay" ? `<div class="panel-soft p-5 mt-6"><div class="flex flex-wrap items-center justify-between gap-3"><div><h3 class="text-xl font-bold">扫码支付</h3><p class="text-sm text-slate-600 mt-1">订单金额 ¥${Number(pendingOrder.amount).toFixed(2)}。选择微信或支付宝后展示二维码。</p></div><span class="status-pill text-amber-700 bg-amber-50 border border-amber-200">等待付款</span></div><div class="flex flex-wrap gap-3 mt-5"><button class="btn btn-primary" data-open-native-pay="${escapeHtml(pendingOrder.id)}" data-provider="wechat">微信支付</button><button class="btn btn-primary" data-open-native-pay="${escapeHtml(pendingOrder.id)}" data-provider="alipay">支付宝</button></div></div>` : ""}
       ${pendingOrder && state.paymentMode === "manual" ? `<div class="panel-soft p-5 mt-6"><div class="flex flex-wrap items-center justify-between gap-3"><div><h3 class="text-xl font-bold">选择支付方式</h3><p class="text-sm text-slate-600 mt-1">订单金额 ¥${Number(pendingOrder.amount).toFixed(2)}。完成付款后提交对应流水号。</p></div><span class="status-pill text-amber-700 bg-amber-50 border border-amber-200">等待付款</span></div><div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5">${methods.map((method) => `<button class="panel-soft p-4 text-left border-2 ${selectedMethod === method.id ? "border-blue-600 bg-blue-50" : "border-transparent"}" data-select-payment-method="${escapeHtml(method.id)}"><span class="material-symbols-outlined text-blue-700">${escapeHtml(method.icon || "payments")}</span><strong class="block mt-2">${escapeHtml(method.label)}</strong><small class="text-slate-500">${escapeHtml(method.description || "")}</small></button>`).join("")}</div><p class="text-sm text-slate-500 mt-4">已选择：${escapeHtml(methodLabel(selectedMethod))}。卡片与钱包的敏感信息不会在 CheapVPN 页面填写。</p></div>` : ""}
       <div class="overflow-x-auto mt-7">
         <table class="w-full text-left min-w-[680px]"><thead><tr class="text-sm text-slate-500 border-b border-slate-200">
@@ -1630,6 +1752,34 @@ function renderAccount() {
       </div>
     </div>
   `;
+}
+
+function bindPaymentModal() {
+  document.querySelector("[data-close-payment-modal]")?.addEventListener("click", () => {
+    state.paymentSession = null;
+    render();
+  });
+  document.querySelectorAll("[data-pay-provider]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const provider = event.currentTarget.dataset.payProvider;
+      const orderId = state.paymentSession?.order?.id;
+      if (!orderId) return;
+      try {
+        const created = await apiRequest(`/orders/${encodeURIComponent(orderId)}/payments`, { method: "POST", body: { provider } });
+        state.paymentSession = { ...state.paymentSession, payment: created };
+        render();
+      } catch (error) { showToast(error.message); }
+    });
+  });
+  document.querySelectorAll("[data-copy-sub]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const value = event.currentTarget.dataset.copySub;
+      if (value) {
+        await navigator.clipboard.writeText(value);
+        showToast("订阅已复制");
+      }
+    });
+  });
 }
 
 function metric(label, value) {
@@ -1794,6 +1944,18 @@ function bindEvents() {
       }
     });
   });
+  document.querySelectorAll("[data-open-native-pay]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const orderId = event.currentTarget.dataset.openNativePay;
+      const order = state.orders.find((item) => item.id === orderId);
+      if (!order) return;
+      try {
+        const created = await apiRequest(`/orders/${encodeURIComponent(orderId)}/payments`, { method: "POST", body: { provider: event.currentTarget.dataset.provider || "wechat" } });
+        state.paymentSession = { order, payment: created, planName: order.planName };
+        render();
+      } catch (error) { showToast(error.message); }
+    });
+  });
   document.querySelectorAll("[data-select-payment-method]").forEach((button) => {
     button.addEventListener("click", (event) => {
       state.selectedPaymentMethod = event.currentTarget.dataset.selectPaymentMethod || "";
@@ -1920,6 +2082,15 @@ async function buyPlan(planId = state.subscription?.plan?.id || state.plans[0]?.
     } catch (error) {
       if (error.code !== "REQUEST_TIMEOUT") throw error;
       order = await orderRequest();
+    }
+    if (state.paymentMode === "wechat_alipay") {
+      const created = await apiRequest(`/orders/${encodeURIComponent(order.order.id)}/payments`, { method: "POST", body: { provider: "wechat" } });
+      state.orders = (await apiRequest("/orders")).orders || state.orders;
+      state.paymentSession = { order: order.order, payment: created, planName: order.plan?.name || state.plan?.name };
+      state.view = "billing";
+      showToast(t("orderPending"));
+      render();
+      return;
     }
     if (state.paymentMode !== "mock") {
       state.orders = (await apiRequest("/orders")).orders || state.orders;

@@ -50,12 +50,18 @@ try {
   const payment = ok(await request("/api/payment/config", { token: customer.token }), "payment config");
   assert.equal(payment.mode, "manual");
   assert.match(payment.manualInstructions, /订单号/);
+  assert.ok(payment.methods.some((method) => method.id === "alipay"), "manual payment should expose configured payment methods");
   const order = ok(await request("/api/orders", { method: "POST", token: customer.token, body: { planId: plans.plans[0].id } }), "create manual order");
   const customerConfirm = await request(`/api/orders/${order.order.id}/confirm`, { method: "POST", token: customer.token });
   assert.equal(customerConfirm.response.status, 409, "customer must not confirm a manual payment");
+  const paymentSubmission = ok(await request(`/api/orders/${order.order.id}/payment-submission`, { method: "POST", token: customer.token, body: { method: "alipay", reference: "ALI-TEST-001", note: "paid from test account" } }), "submit payment reference");
+  assert.equal(paymentSubmission.paymentSubmission.reference, "ALI-TEST-001");
+  const orderDetail = ok(await request(`/api/orders/${order.order.id}`, { token: customer.token }), "customer order detail");
+  assert.equal(orderDetail.order.paymentSubmission.method, "alipay");
   const admin = ok(await request("/api/admin/auth/login", { method: "POST", body: { password: "manual-admin-password" } }), "admin login");
   const pendingOrders = ok(await request("/api/admin/orders", { token: admin.token }), "admin orders");
   assert.equal(pendingOrders.orders.find((item) => item.id === order.order.id)?.status, "pending");
+  assert.equal(pendingOrders.orders.find((item) => item.id === order.order.id)?.paymentSubmission.reference, "ALI-TEST-001");
   assert.equal(pendingOrders.pagination.total >= 1, true, "admin orders should expose pagination metadata");
   const pendingFiltered = ok(await request("/api/admin/orders?status=pending&q=manual", { token: admin.token }), "filtered admin orders");
   assert.equal(pendingFiltered.orders.some((item) => item.id === order.order.id), true, "admin orders should filter by customer and status");

@@ -12,7 +12,9 @@ const baseUrl = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ["server/index.js"], {
   cwd: projectDir,
   env: { ...process.env, NODE_ENV: "production", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: dataDir,
-    PUBLIC_BASE_URL: baseUrl, ADMIN_PASSWORD: "production-guard-password", ADMIN_ENCRYPTION_KEY: "production-guard-key",
+    PUBLIC_BASE_URL: baseUrl,
+    ADMIN_PASSWORD: "replace-with-a-long-unique-admin-password",
+    ADMIN_ENCRYPTION_KEY: "replace-with-a-random-32-character-or-longer-secret",
     PAYMENT_MODE: "mock", ALLOW_DEMO_SUBSCRIPTION: "true", ALLOW_DEMO_ACCOUNT: "false" },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -42,6 +44,8 @@ try {
   assert.match(output, /CheapVPN refused to start in production/i, "production refusal should explain the safety gate");
   assert.match(output, /ALLOW_DEMO_SUBSCRIPTION must be false/i, "production refusal should identify demo subscription configuration");
   assert.match(output, /ready manual or webhook payment configuration/i, "production refusal should identify payment configuration");
+  assert.match(output, /ADMIN_ENCRYPTION_KEY must be a random secret/i, "production refusal should reject the encryption key placeholder");
+  assert.match(output, /strong ADMIN_PASSWORD/i, "production refusal should reject the admin password placeholder");
   console.log("Production guard E2E passed: unsafe demo configuration is rejected before the API starts");
 } finally {
   await stop();
